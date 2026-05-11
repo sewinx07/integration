@@ -55,7 +55,7 @@ void init_enemy(Enemy* e, int type, SDL_Renderer* ren, int spawn_x)
     }
 
     /* walk */
-    for (int i = 1; i < MAX_FRAMES; i++) {
+    for (int i = 1; i <= 5; i++) {
         snprintf(path, sizeof(path), "%sWalk/frame%02d.png", base, i);
         SDL_Texture* t = IMG_LoadTexture(ren, path);
         if (!t) break;
@@ -63,7 +63,7 @@ void init_enemy(Enemy* e, int type, SDL_Renderer* ren, int spawn_x)
     }
 
     /* attack */
-    for (int i = 1; i < MAX_FRAMES; i++) {
+    for (int i = 1; i <= 5; i++) {
         snprintf(path, sizeof(path), "%sAttack/frame%02d.png", base, i);
         SDL_Texture* t = IMG_LoadTexture(ren, path);
         if (!t) break;
@@ -72,19 +72,19 @@ void init_enemy(Enemy* e, int type, SDL_Renderer* ren, int spawn_x)
 
     /* boss extras */
     if (type == 1) {
-        for (int i = 1; i < MAX_FRAMES; i++) {
+        for (int i = 1; i <= 5; i++) {
             snprintf(path, sizeof(path), "%sTransformation/frame%02d.png", base, i);
             SDL_Texture* t = IMG_LoadTexture(ren, path);
             if (!t) break;
             e->transform_frames[e->num_transform++] = t;
         }
-        for (int i = 1; i < MAX_FRAMES; i++) {
+        for (int i = 1; i <= 5; i++) {
             snprintf(path, sizeof(path), "%sWalk_Trans/frame%02d.png", base, i);
             SDL_Texture* t = IMG_LoadTexture(ren, path);
             if (!t) break;
             e->walk_trans_frames[e->num_walk_trans++] = t;
         }
-        for (int i = 1; i < MAX_FRAMES; i++) {
+        for (int i = 1; i <= 5; i++) {
             snprintf(path, sizeof(path), "%sAttack_Trans/frame%02d.png", base, i);
             SDL_Texture* t = IMG_LoadTexture(ren, path);
             if (!t) break;

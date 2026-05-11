@@ -687,6 +687,25 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
+            
+            /* Check if all minions are dead and spawn boss */
+            if (!bossSpawned) {
+                int allMinionsDead = 1;
+                for (int i = 0; i < MAX_MINIONS; i++) {
+                    if (minions[i].alive) {
+                        allMinionsDead = 0;
+                        break;
+                    }
+                }
+                if (allMinionsDead) {
+                    init_enemy(&boss, 1, ren, (int)p1.worldX + 800);
+                    setEnemyY(&boss, currentLevel);
+                    bossSpawned = 1;
+                    bossActive = 1;
+                    fprintf(stderr, "[BOSS] FINAL BOSS SPAWNED!\n");
+                }
+            }
+            
             for (int i = 0; i < MAX_MINIONS; i++) {
                 if (!minions[i].alive) continue;
                 /* In multiplayer, find the closest player to this enemy */

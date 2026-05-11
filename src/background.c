@@ -464,7 +464,7 @@ void saisirNomJoueur(SDL_Renderer *renderer, char *outName) {
 
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_TEXTINPUT && nameLen < MAX_NAME_LEN - 1) {
-                strcat(name, e.text.text);
+                strncat(name, e.text.text, MAX_NAME_LEN - 1 - nameLen);
                 nameLen = (int)strlen(name);
             } else if (e.type == SDL_KEYDOWN) {
                 if (e.key.keysym.sym == SDLK_BACKSPACE && nameLen > 0)

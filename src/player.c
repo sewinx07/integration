@@ -4,11 +4,31 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *STATE_FOLDERS[STATE_COUNT] = { "assets/sprites/idle/",   "assets/sprites/walk/", "assets/sprites/sprint/", "assets/sprites/jump/","assets/sprites/shoot/",  "assets/sprites/death/"};
-static const int FRAME_COUNTS[STATE_COUNT] = {6, 6, 5, 5, 2, 4};
+/* Player 1 uses normal player sprites */
+static const char *STATE_FOLDERS_P1[STATE_COUNT] = { 
+    "assets/sprites/idle/",   
+    "assets/sprites/walk/", 
+    "assets/sprites/sprint/", 
+    "assets/sprites/jump/",
+    "assets/sprites/shoot/",  
+    "assets/sprites/death/"
+};
+
+/* Player 2 uses personage2 character sprites */
+static const char *STATE_FOLDERS_P2[STATE_COUNT] = { 
+    "assets/personage2/standing/",   
+    "assets/personage2/walking/", 
+    "assets/personage2/running/", 
+    "assets/personage2/running/",
+    "assets/personage2/fight/",  
+    "assets/personage2/death/"
+};
+
+static const int FRAME_COUNTS_P1[STATE_COUNT] = {6, 6, 5, 5, 2, 4};
+static const int FRAME_COUNTS_P2[STATE_COUNT] = {1, 5, 5, 5, 6, 5};
 static const int FRAME_DELAYS[STATE_COUNT] = {180,110,80,90,120,160};
 
-static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,const char *folder, int count, int delay)
+static void chargerAnimation(Animation *anim, SDL_Renderer *renderer, const char *folder, int count, int delay)
 {
     anim->textures      = malloc(count * sizeof(SDL_Texture *));
     anim->frameCount    = count;
@@ -16,8 +36,32 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,const char 
     anim->lastFrameTime = SDL_GetTicks();
     anim->frameDelay    = delay;
     char path[256];
+    
+    /* Determine naming convention by checking what's available */
+    int useFrame0 = 0;  /* true for frame0.png, false for other patterns */
+    snprintf(path, sizeof(path), "%sframe0.png", folder);
+    FILE *test = fopen(path, "r");
+    if (test) {
+        useFrame0 = 1;
+        fclose(test);
+    }
+    
     for (int i = 0; i < count; i++) {
-        snprintf(path, sizeof(path), "%sframe%d.png", folder, i);
+        /* Try different naming patterns */
+        if (useFrame0) {
+            snprintf(path, sizeof(path), "%sframe%d.png", folder, i);
+        } else {
+            /* Determine prefix and use 1-based numbering */
+            char prefix[4] = "f";  /* default: f1, f2, etc. */
+            if (strstr(folder, "standing")) snprintf(prefix, sizeof(prefix), "s");
+            else if (strstr(folder, "walking")) snprintf(prefix, sizeof(prefix), "w");
+            else if (strstr(folder, "running")) snprintf(prefix, sizeof(prefix), "r");
+            else if (strstr(folder, "fight")) snprintf(prefix, sizeof(prefix), "f");
+            else if (strstr(folder, "death")) snprintf(prefix, sizeof(prefix), "d");
+            
+            snprintf(path, sizeof(path), "%s%s%d.png", folder, prefix, i + 1);
+        }
+        
         SDL_Surface *s = IMG_Load(path);
         if (!s) {
             SDL_Surface *ph = SDL_CreateRGBSurface(0,
@@ -62,8 +106,11 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,PlayerID id, float start
     fprintf(stderr, "[INFO] Loading %s animations...\n", p->name);
 
     int loadFailed = 0;
+    const char **stateFolders = (id == PLAYER_1) ? STATE_FOLDERS_P1 : STATE_FOLDERS_P2;
+    const int *frameCounts = (id == PLAYER_1) ? FRAME_COUNTS_P1 : FRAME_COUNTS_P2;
+    
     for (int i = 0; i < STATE_COUNT; i++) {
-        chargerAnimation(&p->anims[i], renderer,STATE_FOLDERS[i], FRAME_COUNTS[i], FRAME_DELAYS[i]);
+        chargerAnimation(&p->anims[i], renderer, stateFolders[i], frameCounts[i], FRAME_DELAYS[i]);
         if (!p->anims[i].textures || p->anims[i].frameCount == 0) {
             fprintf(stderr, "[WARN] Animation state %d missing for %s\n", i, p->name);
             loadFailed = 1;
