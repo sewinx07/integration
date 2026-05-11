@@ -1,0 +1,11 @@
+Quelle couleur du code Matrix?|Vert|Rouge|Bleu|Jaune|1
+Neo est le héros de ?|Matrix|Avatar|Titanic|Cars|1
+Qui donne la pilule rouge ?|Morpheus|Smith|Neo|Oracle|1
+Matrix est un ?|Programme|Animal|Livre|Ville|1
+Qui combat Neo ?|Smith|Tom|Jerry|Batman|1
+Pilule rouge signifie ?|Vérité|Dormir|Manger|Code|1
+Qui aide Neo ?|Trinity|Elsa|Anna|Mia|1
+Couleur thème Matrix ?|Vert|Rose|Orange|Blanc|1
+Neo sait faire ?|Kungfu|Cuisine|Danse|Foot|1
+Qui crée Matrix ?|Machines|Chats|Humains|Aliens|1
+
