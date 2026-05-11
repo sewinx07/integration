@@ -26,9 +26,10 @@ static const char *STATE_FOLDERS_P2[STATE_COUNT] = {
 
 static const int FRAME_COUNTS_P1[STATE_COUNT] = {6, 6, 5, 5, 2, 4};
 static const int FRAME_COUNTS_P2[STATE_COUNT] = {1, 5, 5, 5, 6, 5};
-static const int FRAME_DELAYS[STATE_COUNT] = {180,110,80,90,120,160};
+static const int FRAME_DELAYS[STATE_COUNT]    = {180,110,80,90,120,160};
 
-static void chargerAnimation(Animation *anim, SDL_Renderer *renderer, const char *folder, int count, int delay)
+static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
+                              const char *folder, int count, int delay)
 {
     anim->textures      = malloc(count * sizeof(SDL_Texture *));
     anim->frameCount    = count;
@@ -37,28 +38,21 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer, const char
     anim->frameDelay    = delay;
     char path[256];
     
-    /* Determine naming convention by checking what's available */
-    int useFrame0 = 0;  /* true for frame0.png, false for other patterns */
+    int useFrame0 = 0;
     snprintf(path, sizeof(path), "%sframe0.png", folder);
     FILE *test = fopen(path, "r");
-    if (test) {
-        useFrame0 = 1;
-        fclose(test);
-    }
+    if (test) { useFrame0 = 1; fclose(test); }
     
     for (int i = 0; i < count; i++) {
-        /* Try different naming patterns */
         if (useFrame0) {
             snprintf(path, sizeof(path), "%sframe%d.png", folder, i);
         } else {
-            /* Determine prefix and use 1-based numbering */
-            char prefix[4] = "f";  /* default: f1, f2, etc. */
+            char prefix[4] = "f";
             if (strstr(folder, "standing")) snprintf(prefix, sizeof(prefix), "s");
             else if (strstr(folder, "walking")) snprintf(prefix, sizeof(prefix), "w");
             else if (strstr(folder, "running")) snprintf(prefix, sizeof(prefix), "r");
-            else if (strstr(folder, "fight")) snprintf(prefix, sizeof(prefix), "f");
-            else if (strstr(folder, "death")) snprintf(prefix, sizeof(prefix), "d");
-            
+            else if (strstr(folder, "fight"))   snprintf(prefix, sizeof(prefix), "f");
+            else if (strstr(folder, "death"))   snprintf(prefix, sizeof(prefix), "d");
             snprintf(path, sizeof(path), "%s%s%d.png", folder, prefix, i + 1);
         }
         
@@ -78,7 +72,8 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer, const char
     }
 }
 
-int initialiserJoueur(Player *p, SDL_Renderer *renderer,PlayerID id, float startX, float startY)
+int initialiserJoueur(Player *p, SDL_Renderer *renderer,
+                       PlayerID id, float startX, float startY)
 {
     if (!p || !renderer) {
         fprintf(stderr, "[ERROR] Invalid player initialization parameters\n");
@@ -92,7 +87,7 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,PlayerID id, float start
     p->isAlive   = 1;
     p->lives     = 3;
     p->health    = 100;
-    p->lastDamageTime = SDL_GetTicks(); /* grace period: no damage for 600ms after spawn */
+    p->lastDamageTime = SDL_GetTicks();
     p->damageEvent    = 0;
     p->camSmooth = 0.10f;
     p->camX      = startX - SCREEN_WIDTH / 2.0f;
@@ -107,10 +102,11 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,PlayerID id, float start
 
     int loadFailed = 0;
     const char **stateFolders = (id == PLAYER_1) ? STATE_FOLDERS_P1 : STATE_FOLDERS_P2;
-    const int *frameCounts = (id == PLAYER_1) ? FRAME_COUNTS_P1 : FRAME_COUNTS_P2;
+    const int  *frameCounts   = (id == PLAYER_1) ? FRAME_COUNTS_P1  : FRAME_COUNTS_P2;
     
     for (int i = 0; i < STATE_COUNT; i++) {
-        chargerAnimation(&p->anims[i], renderer, stateFolders[i], frameCounts[i], FRAME_DELAYS[i]);
+        chargerAnimation(&p->anims[i], renderer,
+                         stateFolders[i], frameCounts[i], FRAME_DELAYS[i]);
         if (!p->anims[i].textures || p->anims[i].frameCount == 0) {
             fprintf(stderr, "[WARN] Animation state %d missing for %s\n", i, p->name);
             loadFailed = 1;
@@ -118,7 +114,7 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,PlayerID id, float start
     }
 
     if (loadFailed)
-        fprintf(stderr, "[WARN] %s loaded with missing sprites \n", p->name);
+        fprintf(stderr, "[WARN] %s loaded with missing sprites\n", p->name);
     else
         fprintf(stderr, "[INFO] %s ready.\n", p->name);
 
@@ -199,14 +195,21 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         int mv = (ot < ob)  ? ot : ob;
 
         if (mv <= mh) {
+            /* Vertical resolution */
             if (ot < ob) {
-                p->worldY -= ot;
-                if (p->velY >= 0) { p->velY = 0; touchedGround = 1; }
+                /* Landing on top — only resolve if actually moving downward
+                   or barely overlapping. This prevents the "snap up" glitch
+                   when jumping into the underside of a platform. */
+                if (p->velY >= 0 || ot <= 4) {
+                    p->worldY -= ot;
+                    if (p->velY >= 0) { p->velY = 0; touchedGround = 1; }
+                }
             } else {
                 p->worldY += ob;
                 if (p->velY < 0) p->velY = 0;
             }
         } else {
+            /* Horizontal resolution */
             if (pl->type == PLAT_MOBILE) {
                 Uint32 now = SDL_GetTicks();
                 if (now - p->lastDamageTime > 600) {
@@ -233,7 +236,6 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
     }
 }
 
-
 static void verifierPieges(Player *p, Platform *plats, int n)
 {
     Uint32 now = SDL_GetTicks();
@@ -244,7 +246,11 @@ static void verifierPieges(Player *p, Platform *plats, int n)
         int playerCenterX = (int)(p->worldX + PLAYER_W  / 2);
         int playerCenterY = (int)(p->worldY + PLAYER_PH / 2);
 
-        int touchesVoid = (playerCenterX >= pl->rect.x && playerCenterX <= pl->rect.x + pl->rect.w && playerCenterY >= pl->rect.y && playerCenterY <= pl->rect.y + pl->rect.h);
+        int touchesVoid =
+            (playerCenterX >= pl->rect.x &&
+             playerCenterX <= pl->rect.x + pl->rect.w &&
+             playerCenterY >= pl->rect.y &&
+             playerCenterY <= pl->rect.y + pl->rect.h);
 
         if (touchesVoid) {
             if (now - p->lastDamageTime > 500) {
@@ -258,7 +264,6 @@ static void verifierPieges(Player *p, Platform *plats, int n)
         }
     }
 }
-
 
 static void determinerEtat(Player *p)
 {
@@ -323,7 +328,7 @@ static void mettreAJourAnimation(Player *p)
     Uint32 now     = SDL_GetTicks();
     Uint32 elapsed = now - a->lastFrameTime;
 
-    if (elapsed < (Uint32)a->frameDelay) return; 
+    if (elapsed < (Uint32)a->frameDelay) return;
 
     Uint32 ticks = elapsed / (Uint32)a->frameDelay;
     a->lastFrameTime += ticks * (Uint32)a->frameDelay;
@@ -336,6 +341,13 @@ static void mettreAJourAnimation(Player *p)
     }
 }
 
+/*
+ * FIX 3 — GLITCH:
+ * mettreAJourBalles() is called ONCE here, inside mettreAJourJoueur.
+ * main.c must NOT call it a second time — that double-update was
+ * causing bullets (and indirectly the player via collision response)
+ * to move at twice the expected speed, producing the jitter/glitch.
+ */
 void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
 {
     deplacerJoueur(p);
@@ -357,6 +369,8 @@ void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
 
     mettreAJourAnimation(p);
     mettreAJourCamera(p);
+
+    /* Bullets updated ONCE here — do not call mettreAJourBalles from main.c */
     mettreAJourBalles(p);
 }
 
@@ -391,8 +405,8 @@ void mettreAJourBalles(Player *p)
     }
 }
 
-
-void afficherJoueur(Player *p, SDL_Renderer *renderer,float camX, float camY)
+void afficherJoueur(Player *p, SDL_Renderer *renderer,
+                    float camX, float camY)
 {
     if (!p->isAlive && p->state != STATE_DEATH) return;
     Animation *a = &p->anims[p->state];
@@ -431,7 +445,7 @@ void afficherBalles(Player *p, SDL_Renderer *renderer,
     }
 }
 
-void afficherHUDJoueur(Player *p, SDL_Renderer *renderer,int hx, int hy)
+void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
 {
     Uint8 cr = 0;
     Uint8 cg = (p->id == PLAYER_1) ? 200 : 200;
@@ -465,7 +479,7 @@ void ajouterScore(Player *p, int pts) { p->score += pts; }
 void perdreVie(Player *p)
 {
     p->health -= 25;
-    p->damageEvent = 1;  
+    p->damageEvent = 1;
     if (p->health <= 0) {
         p->lives--;
         if (p->lives <= 0) {
@@ -474,7 +488,7 @@ void perdreVie(Player *p)
             p->isAlive = 0;
             p->state   = STATE_DEATH;
         } else {
-            p->health = 50; 
+            p->health = 50;
         }
     }
 }

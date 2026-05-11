@@ -349,16 +349,8 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
         return es->result;
     }
 
-    /* ── render ── */
-    SDL_SetRenderDrawColor(ren, 0, 8, 0, 255);
-    SDL_RenderClear(ren);
-    if (es->bgTex) SDL_RenderCopy(ren, es->bgTex, NULL, NULL);
-
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 160);
-    SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
-    SDL_RenderFillRect(ren, &full);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    /* ── render overlay on top of matrix rain drawn by main.c ── */
+    drawOverlay(ren);
 
     SDL_Color green  = {57, 255, 20, 255};
     SDL_Color white  = {220, 255, 220, 255};
@@ -377,35 +369,32 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
     int bw = 500, bh = 60, bx = SCREEN_WIDTH / 2 - bw / 2;
     int by0 = 180;
     const char *keys[4] = {"1", "2", "3", "4"};
-    SDL_Color keyCols[4] = {
-        {80, 220, 255, 255},
-        {80, 220, 255, 255},
-        {80, 220, 255, 255},
-        {80, 220, 255, 255}
-    };
     int mx2, my2; SDL_GetMouseState(&mx2, &my2);
 
     for (int i = 0; i < 4; i++) {
         SDL_Rect btn = { bx, by0 + i * (bh + 14), bw, bh };
         int hov = pointInRect(mx2, my2, btn);
-        drawGlowBtn(ren, btn, hov, NULL);
+        drawBtn(ren, NULL, btn, hov, NULL);
 
         char label[120];
         snprintf(label, sizeof(label), "[%s]  %s", keys[i], q->rep[i]);
         ttfAt(ren, es->fontSmall, label, hov ? white : (SDL_Color){160,255,160,255},
               btn.x + 20, btn.y + (bh - 24) / 2);
-        (void)keyCols;
     }
 
-    /* timer bar + number */
+    /* timer bar background then fill (bg first so fill is visible on top) */
+    SDL_Rect tbarBg = { SCREEN_WIDTH/2 - 250, 510, 500, 18 };
+    SDL_SetRenderDrawColor(ren, 30, 30, 30, 255);
+    SDL_RenderFillRect(ren, &tbarBg);
+
     int timerBarW = (int)(500.0f * es->timeLeft / QCM_TIME_SEC);
     SDL_SetRenderDrawColor(ren,
         (Uint8)(255 - 2 * es->timeLeft),
         (Uint8)(2 * es->timeLeft), 0, 255);
     SDL_Rect tbar = { SCREEN_WIDTH/2 - 250, 510, timerBarW, 18 };
     SDL_RenderFillRect(ren, &tbar);
+
     SDL_SetRenderDrawColor(ren, 57, 255, 20, 200);
-    SDL_Rect tbarBg = { SCREEN_WIDTH/2 - 250, 510, 500, 18 };
     SDL_RenderDrawRect(ren, &tbarBg);
 
     char timeBuf[16];
@@ -463,16 +452,8 @@ void enigmeStartPuzzle(EnigmeSession *es)
 EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
                                  SDL_Event *ev)
 {
-    /* ── render ── */
-    SDL_SetRenderDrawColor(ren, 0, 8, 0, 255);
-    SDL_RenderClear(ren);
-    if (es->bgTex) SDL_RenderCopy(ren, es->bgTex, NULL, NULL);
-
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 160);
-    SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
-    SDL_RenderFillRect(ren, &full);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    /* ── render overlay on top of matrix rain drawn by main.c ── */
+    drawOverlay(ren);
 
     SDL_Color green  = {57, 255, 20, 255};
     SDL_Color white  = {220, 255, 220, 255};
@@ -540,7 +521,7 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
 
     /* selected tile indicator */
     if (es->selectedTile >= 0) {
-        char buf[64];
+        char buf[128];
         snprintf(buf, sizeof(buf), "Tuile %d selectionnee — cliquez sur une autre pour echanger",
                  es->selectedTile + 1);
         ttfCentre(ren, es->fontSmall, buf,
