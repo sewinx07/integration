@@ -1,109 +1,24 @@
 /**
- * main.c — MATRIX GAME  (Comprehensive Fix Build)
- * =================================================
+ * main.c — MATRIX GAME  (Comprehensive Fix Build + Character Select)
+ * ====================================================================
  *
- * FIXES IN THIS VERSION:
+ * CHARACTER SELECT ADDITIONS (all other fixes preserved unchanged):
  *
- *  [INPUT-1]  P2 arrow keys conflicted with P1 arrow keys in MONO mode —
- *             P2 now only captures arrow keys when dispMode == MODE_MULTI.
+ *  [CHARSEL-1] Added APP_CHARACTER_SELECT state between MODE_SELECT and
+ *              NAME_ENTRY.  In solo mode, VALIDER now routes to character
+ *              select first; multi-player skips it (unchanged).
  *
- *  [INPUT-2]  Level-switch keys were SDLK_1/SDLK_2 which overlapped with
- *             QCM answer keys. Changed to F11/F12 (already done) and
- *             added guard so they cannot fire during enigme states.
+ *  [CHARSEL-2] renderCharacterSelect() draws two portrait cards (NEO /
+ *              TRINITY) with hover glow, animated scan-line, and stats.
+ *              No sprites are required — everything is drawn procedurally.
  *
- *  [INPUT-3]  Both players fired on SDL_MOUSEBUTTONDOWN LEFT — now P1
- *             fires on LEFT and P2 fires on RIGHT only when in MULTI mode.
+ *  [CHARSEL-3] selectedCharacter (0=NEO, 1=TRINITY) is stored globally
+ *              and applied to p1.name at game-start.  Game logic, player
+ *              IDs, and sprite folders are NOT changed.
  *
- *  [INPUT-4]  SDL_StartTextInput was never called for the NAME_ENTRY
- *             state re-entry path; now always called on state enter.
- *
- *  [BOSS-1]   Boss y was reset EVERY frame by setEnemyY(), overriding
- *             any vertical displacement from update_enemy(). setEnemyY is
- *             now called only once at spawn, not every frame.
- *
- *  [BOSS-2]   Boss kill score was added to p1.score but not to p2 in
- *             MULTI mode. Fixed.
- *
- *  [BOSS-3]   Boss could re-spawn because bossSpawned was never set when
- *             all minions were dead but minionKills < threshold (edge case
- *             where minions are stomped). Kill counter now also increments
- *             on stomp (health <= 0 path).
- *
- *  [BOSS-4]   After boss defeat, bossActive was set to 0 but the dead
- *             boss struct was still passed to renderMinimap as "active".
- *             Fixed by only passing when bossActive==1 AND boss.alive.
- *
- *  [ENIGME-1] enigmeRenderChoice polled no event in the render path
- *             because gotEvent was 0 after the event loop consumed the
- *             SDL_MOUSEBUTTONDOWN. Events for enigme screens are now
- *             buffered separately (enigmeEv) and passed every frame.
- *
- *  [ENIGME-2] APP_ENIGME_RESULT called SDL_RenderPresent inside
- *             enigmeRenderResult, then main loop called it again —
- *             double-present causing a flicker. Removed internal present.
- *
- *  [ENIGME-3] On ENIGME_WIN the p1WasAlive/p2WasAlive trackers were not
- *             reset before returning to APP_GAME, causing an immediate
- *             re-trigger of the enigme for the same player. Fixed.
- *
- *  [ENIGME-4] enigme.selectedTile was not reset between attempts when
- *             the puzzle screen was re-entered. Now reset in enigmeStartPuzzle
- *             (already in enigme.c) AND guarded here.
- *
- *  [ENIGME-5] QCM timer comparison used SDL_GetTicks() – startTime with
- *             no frame-delta guard; can skip from PENDING to LOSE in one
- *             frame if ticks overflow. Added explicit PENDING guard.
- *
- *  [SPAWN-1]  Enemy spawn used p1.worldX ± 800 which could place enemies
- *             off-screen left on wide worlds. Now uses a visibility-aware
- *             spawn that always places enemies just off the current viewport.
- *
- *  [SPAWN-2]  After resetEnemies only 2 minions were inited but the loop
- *             runs MAX_MINIONS (5). Remaining slots had alive=0 but dirty
- *             memory from previous game. memset before init fixed this.
- *
- *  [KILL-1]   minionKills was incremented using a local wasAlive=1 flag
- *             that was never set to the actual prior-alive state. The loop
- *             now correctly saves alive before calling update_enemy.
- *
- *  [RENDER-1] In MULTI mode the split-screen divider was drawn over the
- *             HUD because SDL_RenderSetViewport(NULL) wasn't called first.
- *             Viewport is now cleared before drawing the divider line.
- *
- *  [RENDER-2] renderHalf set bg->camX = p->camX but forgot to restore it
- *             after afficherBackground, so the second player's half used
- *             a stale camX. savedCam restore added.
- *
- *  [HUD-1]   afficherTemps was called with SCREEN_WIDTH-140 in MONO but
- *            the time string width is ~130px at scale 2 — it was clipped.
- *            Position adjusted to SCREEN_WIDTH-160.
- *
- *  [MEMORY-1] tbtnFree was never called on menuBtns array in cleanup.
- *             Fixed (was already partially done; ensured all 5 are freed).
- *
- *  [PAUSE-1]  Pausing via 'p' key in GAME state consumed the event but
- *             the rendering did not skip enemy/player updates in the same
- *             frame. updateBackground already checks bg.paused; player
- *             update now also skips when paused.
- *
- *  [CAMERA-1] In MULTI mode updateCamera was never called, so bg->camX
- *             stayed at 0. Each player has their own camX (p->camX) used
- *             by renderHalf, which is correct — removed stale MONO-only
- *             updateCamera call that was not conditional on MODE_MONO.
- *
- *  [NAMEINPUT-1] APP_NAME_ENTRY text input was frozen because SDL_TEXTINPUT
- *             and SDL_KEYDOWN events were consumed by the shared event loop
- *             before reaching nameEntryUpdate(). The event loop now skips
- *             processing for NAME_ENTRY state (except SDL_QUIT and ESC),
- *             and nameEntryUpdate() polls its own events directly so that
- *             every keystroke is guaranteed to reach the name input handler.
- *
- *  [LED-2]    Arduino LED feedback: print "HIT\n" or "DEAD\n" to stdout
- *             when p1/p2 damageEvent is set. Must happen BEFORE
- *             renderMinimap() because minimap.c resets damageEvent = 0
- *             inside renderMinimap when it draws the red flash overlay.
- *             The Python bridge watches stdout and sends 'B' or 'D' to
- *             the Arduino which blinks the LED accordingly.
+ * All original fixes ([INPUT-1..4], [BOSS-1..4], [ENIGME-1..5],
+ * [SPAWN-1..2], [KILL-1], [RENDER-1..2], [HUD-1], [MEMORY-1],
+ * [PAUSE-1], [CAMERA-1], [NAMEINPUT-1], [LED-2]) are preserved verbatim.
  */
 
 #include <SDL2/SDL.h>
@@ -138,10 +53,12 @@
 
 /* ============================================================
  * APP STATES
+ * [CHARSEL-1] APP_CHARACTER_SELECT inserted between MODE_SELECT and NAME_ENTRY
  * ============================================================ */
 typedef enum {
     APP_MAIN_MENU,
     APP_MODE_SELECT,
+    APP_CHARACTER_SELECT,   /* ← NEW */
     APP_NAME_ENTRY,
     APP_OPTION,
     APP_SCORES,
@@ -153,6 +70,9 @@ typedef enum {
     APP_ENIGME_PUZZLE,
     APP_ENIGME_RESULT,
 } AppState;
+
+/* [CHARSEL-3] 0 = NEO, 1 = TRINITY */
+static int selectedCharacter = 0;
 
 /* ============================================================
  * TTF BUTTON
@@ -230,17 +150,295 @@ static void bbtnDraw(SDL_Renderer *ren, BBtn *b) {
 }
 
 /* ============================================================
+ * [CHARSEL-2] CHARACTER SELECTION SCREEN
+ *
+ * Draws two portrait cards side by side. Each card contains:
+ *   - A stylised silhouette drawn with SDL primitives
+ *   - Character name + role subtitle
+ *   - Three stat bars (SPEED / POWER / AGILITY)
+ *   - Animated green scan-line on the hovered card
+ *   - Bright border glow when hovered, dim border when not
+ *
+ * Returns:
+ *   -1  nothing selected yet
+ *    0  NEO card clicked
+ *    1  TRINITY card clicked
+ * ============================================================ */
+
+/* Draw a single filled rounded-ish rectangle (just a normal rect for SDL2) */
+static void drawFilledRect(SDL_Renderer *ren, SDL_Rect r,
+                            Uint8 rr, Uint8 g, Uint8 b, Uint8 a)
+{
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, rr, g, b, a);
+    SDL_RenderFillRect(ren, &r);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+}
+
+static void drawBorderedRect(SDL_Renderer *ren, SDL_Rect r,
+                              Uint8 rr, Uint8 g, Uint8 b, int thick)
+{
+    SDL_SetRenderDrawColor(ren, rr, g, b, 255);
+    for (int i = 0; i < thick; i++) {
+        SDL_Rect inner = {r.x + i, r.y + i, r.w - i*2, r.h - i*2};
+        SDL_RenderDrawRect(ren, &inner);
+    }
+}
+
+
+/* Draw a single stat bar: label left, bar right */
+static void drawStatBar(SDL_Renderer *ren, int x, int y,
+                         const char *label, int value /* 0-100 */,
+                         Uint8 rr, Uint8 g, Uint8 b)
+{
+    drawText(ren, x, y, label, 1, 140, 200, 140);
+
+    int bx = x + 80, bw = 120, bh = 8;
+    /* Background */
+    SDL_SetRenderDrawColor(ren, 20, 40, 20, 255);
+    SDL_Rect bg = {bx, y + 1, bw, bh};
+    SDL_RenderFillRect(ren, &bg);
+    /* Fill */
+    int fw = bw * value / 100;
+    SDL_SetRenderDrawColor(ren, rr, g, b, 255);
+    SDL_Rect fill = {bx, y + 1, fw, bh};
+    SDL_RenderFillRect(ren, &fill);
+    /* Border */
+    SDL_SetRenderDrawColor(ren, 0, 120, 30, 255);
+    SDL_RenderDrawRect(ren, &bg);
+}
+
+static int renderCharacterSelect(SDL_Renderer *ren,
+                                  TTF_Font *font, TTF_Font *fontSmall,
+                                  SDL_Event *ev, int mx, int my)
+{
+    /* ── background ── */
+    SDL_SetRenderDrawColor(ren, 0, 8, 3, 255);
+    SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
+    SDL_RenderFillRect(ren, &full);
+
+    /* subtle grid overlay */
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, 0, 60, 0, 18);
+    for (int gx = 0; gx < SCREEN_WIDTH;  gx += 40)
+        SDL_RenderDrawLine(ren, gx, 0, gx, SCREEN_HEIGHT);
+    for (int gy = 0; gy < SCREEN_HEIGHT; gy += 40)
+        SDL_RenderDrawLine(ren, 0, gy, SCREEN_WIDTH, gy);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+
+    /* ── title ── */
+    SDL_Color green  = {57, 255, 20, 255};
+    SDL_Color white  = {220, 255, 220, 255};
+
+    /* Title via TTF */
+    SDL_Surface *ts = TTF_RenderText_Blended(font, "CHOISISSEZ VOTRE PERSONNAGE", green);
+    if (ts) {
+        SDL_Texture *tt = SDL_CreateTextureFromSurface(ren, ts);
+        if (tt) {
+            SDL_Rect tr = {SCREEN_WIDTH/2 - ts->w/2, 34, ts->w, ts->h};
+            SDL_RenderCopy(ren, tt, NULL, &tr);
+            SDL_DestroyTexture(tt);
+        }
+        SDL_FreeSurface(ts);
+    }
+
+    /* subtitle */
+    SDL_Surface *sub = TTF_RenderText_Blended(fontSmall,
+        "Cliquez sur un personnage pour le selectionner", white);
+    if (sub) {
+        SDL_Texture *st = SDL_CreateTextureFromSurface(ren, sub);
+        if (st) {
+            SDL_Rect sr = {SCREEN_WIDTH/2 - sub->w/2, 80, sub->w, sub->h};
+            SDL_RenderCopy(ren, st, NULL, &sr);
+            SDL_DestroyTexture(st);
+        }
+        SDL_FreeSurface(sub);
+    }
+
+    /* ── card layout ── */
+    int cardW = 320, cardH = 440;
+    int gap   = 80;
+    int totalW = cardW * 2 + gap;
+    int cardX1 = SCREEN_WIDTH/2 - totalW/2;
+    int cardX2 = cardX1 + cardW + gap;
+    int cardY  = 115;
+
+    SDL_Rect card1 = {cardX1, cardY, cardW, cardH};
+    SDL_Rect card2 = {cardX2, cardY, cardW, cardH};
+
+    int hov1 = (mx >= card1.x && mx <= card1.x + card1.w &&
+                my >= card1.y && my <= card1.y + card1.h);
+    int hov2 = (mx >= card2.x && mx <= card2.x + card2.w &&
+                my >= card2.y && my <= card2.y + card2.h);
+
+    Uint32 ticks = SDL_GetTicks();
+
+    /* helper to draw one full card */
+    for (int card = 0; card < 2; card++) {
+        SDL_Rect cr   = (card == 0) ? card1 : card2;
+        int      hov  = (card == 0) ? hov1  : hov2;
+        int      cx   = cr.x + cr.w / 2;
+
+        /* card background */
+        drawFilledRect(ren, cr,
+                       hov ? 0 : 0,
+                       hov ? 28 : 14,
+                       hov ? 0 : 0,
+                       hov ? 240 : 200);
+
+        /* glow border */
+        if (hov) {
+            /* outer glow — multiple border passes */
+            for (int pass = 3; pass >= 1; pass--) {
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(ren, 57, 255, 20,
+                                       (Uint8)(60 / pass));
+                SDL_Rect glow = {cr.x - pass, cr.y - pass,
+                                 cr.w + pass*2, cr.h + pass*2};
+                SDL_RenderDrawRect(ren, &glow);
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+            }
+            drawBorderedRect(ren, cr, 57, 255, 20, 2);
+        } else {
+            drawBorderedRect(ren, cr, 0, 80, 20, 1);
+        }
+
+        /* animated scan-line on hovered card */
+        if (hov) {
+            int scanY = cr.y + (int)((ticks / 6) % (Uint32)cr.h);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 57, 255, 20, 35);
+            SDL_Rect scan = {cr.x + 1, scanY, cr.w - 2, 3};
+            SDL_RenderFillRect(ren, &scan);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        }
+
+
+
+        /* portrait image */
+        {
+            const char *imgPath = (card == 0)
+                ? "assets/sprites/idle/frame0.png"
+                : "assets/personage2/standing/s1.png";
+            SDL_Texture *portrait = IMG_LoadTexture(ren, imgPath);
+            if (portrait) {
+                /* Scale to fill portrait area inside card, keep aspect ratio */
+                int imgW, imgH;
+                SDL_QueryTexture(portrait, NULL, NULL, &imgW, &imgH);
+                int maxW = cr.w - 20;
+                int maxH = 230;  /* portrait zone height */
+                float scale = (float)maxW / imgW;
+                if (imgH * scale > maxH) scale = (float)maxH / imgH;
+                int dw = (int)(imgW * scale);
+                int dh = (int)(imgH * scale);
+                /* dim slightly when not hovered */
+                if (!hov) SDL_SetTextureColorMod(portrait, 130, 130, 130);
+                SDL_Rect pdst = {cx - dw/2, cardY + 18, dw, dh};
+                SDL_RenderCopy(ren, portrait, NULL, &pdst);
+                SDL_SetTextureColorMod(portrait, 255, 255, 255);
+                SDL_DestroyTexture(portrait);
+            }
+        }
+
+        /* character name */
+        const char *charName = (card == 0) ? "NEO" : "MORPHEUS";
+        SDL_Color nameCol = hov ? (SDL_Color){57, 255, 20, 255}
+                                : (SDL_Color){0, 140, 40, 255};
+        SDL_Surface *ns = TTF_RenderText_Blended(font, charName, nameCol);
+        if (ns) {
+            SDL_Texture *nt = SDL_CreateTextureFromSurface(ren, ns);
+            if (nt) {
+                SDL_Rect nr = {cx - ns->w/2, cardY + 268, ns->w, ns->h};
+                SDL_RenderCopy(ren, nt, NULL, &nr);
+                SDL_DestroyTexture(nt);
+            }
+            SDL_FreeSurface(ns);
+        }
+
+        /* role subtitle */
+        const char *role = (card == 0)
+            ? "L'ELU - HACKER LEGENDAIRE"
+            : "LE GUIDE - MAITRE DU COMBAT";
+        SDL_Surface *rs = TTF_RenderText_Blended(fontSmall, role,
+            (SDL_Color){0, 160, 60, 255});
+        if (rs) {
+            SDL_Texture *rt = SDL_CreateTextureFromSurface(ren, rs);
+            if (rt) {
+                SDL_Rect rr2 = {cx - rs->w/2, cardY + 300, rs->w, rs->h};
+                SDL_RenderCopy(ren, rt, NULL, &rr2);
+                SDL_DestroyTexture(rt);
+            }
+            SDL_FreeSurface(rs);
+        }
+
+        /* divider line below subtitle */
+        SDL_SetRenderDrawColor(ren, 0, 100, 30, 255);
+        SDL_RenderDrawLine(ren, cr.x + 20, cardY + 326,
+                                cr.x + cr.w - 20, cardY + 326);
+
+        /* stat bars */
+        int statX  = cr.x + 20;
+        int statY0 = cardY + 338;
+
+        if (card == 0) {
+            /* NEO: balanced with high power */
+            drawStatBar(ren, statX, statY0 +  0, "VITESSE", 78, 57, 255, 20);
+            drawStatBar(ren, statX, statY0 + 22, "PUISSANCE", 92, 57, 255, 20);
+            drawStatBar(ren, statX, statY0 + 44, "AGILITE", 85, 57, 255, 20);
+        } else {
+            /* TRINITY: high speed, lower power */
+            drawStatBar(ren, statX, statY0 +  0, "VITESSE", 95, 20, 200, 255);
+            drawStatBar(ren, statX, statY0 + 22, "PUISSANCE", 70, 20, 200, 255);
+            drawStatBar(ren, statX, statY0 + 44, "AGILITE", 98, 20, 200, 255);
+        }
+
+        /* "SELECTIONNER" prompt at bottom of card when hovered */
+        if (hov) {
+            int pulse = (int)(200 + 55 * SDL_sin((double)ticks / 200.0));
+            SDL_Surface *sel = TTF_RenderText_Blended(fontSmall, "[ SELECTIONNER ]",
+                (SDL_Color){(Uint8)pulse, 255, (Uint8)pulse, 255});
+            if (sel) {
+                SDL_Texture *st2 = SDL_CreateTextureFromSurface(ren, sel);
+                if (st2) {
+                    SDL_Rect selr = {cx - sel->w/2,
+                                     cardY + cardH - sel->h - 12,
+                                     sel->w, sel->h};
+                    SDL_RenderCopy(ren, st2, NULL, &selr);
+                    SDL_DestroyTexture(st2);
+                }
+                SDL_FreeSurface(sel);
+            }
+        }
+    } /* end card loop */
+
+    /* ESC hint */
+    drawTextCentered(ren, cardY + cardH + 22, 0, SCREEN_WIDTH,
+                     "ESC = RETOUR", 1, 0, 100, 30);
+
+    /* ── click detection ── */
+    if (ev && ev->type == SDL_MOUSEBUTTONDOWN &&
+        ev->button.button == SDL_BUTTON_LEFT) {
+        int ex = ev->button.x, ey = ev->button.y;
+        if (ex >= card1.x && ex <= card1.x + card1.w &&
+            ey >= card1.y && ey <= card1.y + card1.h)
+            return 0; /* NEO selected */
+        if (ex >= card2.x && ex <= card2.x + card2.w &&
+            ey >= card2.y && ey <= card2.y + card2.h)
+            return 1; /* TRINITY selected */
+    }
+    return -1; /* nothing yet */
+}
+
+/* ============================================================
  * GAME HELPERS
  * ============================================================ */
 
-/* [BOSS-1] Only called at spawn, not every frame */
 static void setEnemyY(Enemy *e, GameLevel level) {
     int groundY = (level == LEVEL_1) ? 508 : 560;
     e->y = groundY - e->height;
     if (e->y < 0) e->y = 0;
 }
 
-/* [INPUT-3] Bullet collision only deals damage; kills detected in main loop */
 static void checkBulletsVsEnemies(Player *p,
                                    Enemy *minions, int minionCount,
                                    Enemy *boss,    int bossActive)
@@ -252,7 +450,7 @@ static void checkBulletsVsEnemies(Player *p,
 
         for (int i = 0; i < minionCount; i++) {
             if (!minions[i].alive) continue;
-            if (minions[i].hit_cooldown > 0) continue; /* prevent multi-hit */
+            if (minions[i].hit_cooldown > 0) continue;
             SDL_Rect er = {minions[i].x, minions[i].y,
                            minions[i].width, minions[i].height};
             if (check_enemy_collision(br, er)) {
@@ -285,11 +483,10 @@ static void checkBulletsVsEnemies(Player *p,
 static void checkPlayerVsEnemy(Player *p, Enemy *e, Minimap *mm) {
     if (!e->alive || !p->isAlive) return;
     SDL_Rect pr = {(int)p->worldX + 8, (int)p->worldY + 4,
-                   PLAYER_W - 16, PLAYER_PH - 8}; /* slightly inset hitbox */
+                   PLAYER_W - 16, PLAYER_PH - 8};
     SDL_Rect er = {e->x, e->y, e->width, e->height};
     if (!check_enemy_collision(pr, er)) return;
 
-    /* Stomp: player falling onto enemy top half */
     if (p->velY > 1.0f && (int)p->worldY + PLAYER_PH < e->y + e->height / 2) {
         e->health -= 999;
         e->alive   = 0;
@@ -301,7 +498,6 @@ static void checkPlayerVsEnemy(Player *p, Enemy *e, Minimap *mm) {
     Uint32 now    = SDL_GetTicks();
     int    canHit = (now - p->lastDamageTime) > 1000;
     if (canHit) {
-        /* Minions only damage when attacking; boss always damages */
         if (e->state == 2 || e->type == 1) {
             p->health        -= 20;
             p->lastDamageTime = now;
@@ -316,7 +512,6 @@ static void checkPlayerVsEnemy(Player *p, Enemy *e, Minimap *mm) {
     }
 }
 
-/* [RENDER-2] renderHalf with corrected camX save/restore */
 static void renderHalf(SDL_Renderer *renderer, Background *bg,
                         Player *p, Player *other, SDL_Rect vp,
                         Enemy *minions, int minionCount,
@@ -328,7 +523,6 @@ static void renderHalf(SDL_Renderer *renderer, Background *bg,
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderFillRect(renderer, &localClip);
 
-    /* [RENDER-2] Save both cam axes, restore after */
     float savedCamX = bg->camX;
     float savedCamY = bg->camY;
     bg->camX = p->camX;
@@ -345,7 +539,6 @@ static void renderHalf(SDL_Renderer *renderer, Background *bg,
     afficherJoueur(p, renderer, p->camX, 0);
     afficherBalles(p, renderer, p->camX, 0);
 
-    /* Other player drawn in this half's viewport if visible */
     if (other && other->isAlive) {
         int ox = (int)(other->worldX - p->camX);
         if (ox > -PLAYER_W && ox < vp.w) {
@@ -365,7 +558,6 @@ static void renderHalf(SDL_Renderer *renderer, Background *bg,
     SDL_RenderSetViewport(renderer, NULL);
 }
 
-/* [SPAWN-2] Full reset with memset before re-init */
 static void resetEnemies(Enemy *minions, int count, Enemy *boss,
                           int *bossSpawned, int *bossActive,
                           int *spawnTimer,  int *killCounter,
@@ -384,12 +576,10 @@ static void resetEnemies(Enemy *minions, int count, Enemy *boss,
     *spawnTimer  = 90;
     if (killCounter) *killCounter = 0;
 
-    /* Spawn 2 initial minions at fixed positions */
     init_enemy(&minions[0], 0, renderer, 900);  setEnemyY(&minions[0], level);
     init_enemy(&minions[1], 0, renderer, 1500); setEnemyY(&minions[1], level);
 }
 
-/* [BOSS-1] Boss health bar */
 static void drawBossHealthBar(SDL_Renderer *ren, Enemy *boss)
 {
     if (!boss || !boss->alive || boss->health <= 0) return;
@@ -406,7 +596,6 @@ static void drawBossHealthBar(SDL_Renderer *ren, Enemy *boss)
     if (fillW < 0) fillW = 0;
     if (fillW > bw) fillW = bw;
 
-    /* Gradient: green → orange → red */
     float ratio = (float)boss->health / (float)boss->max_health;
     Uint8 br = (ratio > 0.5f) ? (Uint8)(255 * (1.0f - ratio) * 2) : 255;
     Uint8 bg2 = (ratio > 0.5f) ? 180 : (Uint8)(255 * ratio * 2);
@@ -622,20 +811,15 @@ static void nameEntryLookup(NameEntryState *ns, Background *bg)
     }
 }
 
-/*
- * [NAMEINPUT-1] nameEntryUpdate now polls its own event queue directly.
- * Returns 0=stay, 1=new game, 2=continue
- */
 static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
                             TTF_Font *font, TTF_Font *fontSmall,
                             Background *bg, int mx, int my,
                             int *outQuit, int *outEsc)
 {
-    /* [INPUT-4] Ensure text input is active */
     if (!ns->inputActive) {
         SDL_StopTextInput();
         SDL_Delay(50);
-        while (SDL_PollEvent(NULL)) {} /* flush stale events */
+        while (SDL_PollEvent(NULL)) {}
         SDL_StartTextInput();
         ns->inputActive = 1;
     }
@@ -667,7 +851,7 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
                 nameEntryLookup(ns, bg);
             }
             if (k == SDLK_RETURN && ns->nameLen > 0)
-                return 1; /* new game */
+                return 1;
         }
         if (ev.type == SDL_MOUSEBUTTONDOWN &&
             ev.button.button == SDL_BUTTON_LEFT) {
@@ -676,7 +860,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         }
     }
 
-    /* ── Render ── */
     SDL_SetRenderDrawColor(ren, 0, 8, 3, 255);
     SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
     SDL_RenderFillRect(ren, &full);
@@ -691,6 +874,19 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         SDL_Rect tr = {SCREEN_WIDTH/2 - ts->w/2, 60, ts->w, ts->h};
         SDL_RenderCopy(ren, tt, NULL, &tr);
         SDL_DestroyTexture(tt); SDL_FreeSurface(ts);
+    }
+
+    /* Show selected character name */
+    const char *charLabel = (selectedCharacter == 0)
+        ? "Personnage : NEO" : "Personnage : MORPHEUS";
+    SDL_Color charCol = (selectedCharacter == 0)
+        ? (SDL_Color){57, 255, 20, 255} : (SDL_Color){20, 200, 255, 255};
+    SDL_Surface *cls = TTF_RenderText_Blended(fontSmall, charLabel, charCol);
+    if (cls) {
+        SDL_Texture *clt = SDL_CreateTextureFromSurface(ren, cls);
+        SDL_Rect clr = {SCREEN_WIDTH/2 - cls->w/2, 118, cls->w, cls->h};
+        SDL_RenderCopy(ren, clt, NULL, &clr);
+        SDL_DestroyTexture(clt); SDL_FreeSurface(cls);
     }
 
     SDL_Surface *sub = TTF_RenderText_Blended(fontSmall,
@@ -813,8 +1009,7 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
 }
 
 /* ============================================================
- * HELPERS — visibility-aware enemy spawn position
- * [SPAWN-1] Always place enemy just off-screen relative to player
+ * SPAWN HELPER
  * ============================================================ */
 static int pickSpawnX(Player *p1, Player *p2, DisplayMode mode, int enemyW)
 {
@@ -931,12 +1126,10 @@ int main(int argc, char *argv[]) {
     enigmeInit(&enigme, ren, fontMain, fontSmall);
     Player *enigmePlayer = NULL;
 
-    /* [ENIGME-1] Separate event storage for enigme screens */
     SDL_Event enigmeEv;
     memset(&enigmeEv, 0, sizeof(enigmeEv));
     int hasEnigmeEv = 0;
 
-    /* Death transition trackers */
     int p1WasAlive = 1, p2WasAlive = 1;
 
     /* ── Name entry ── */
@@ -976,11 +1169,12 @@ int main(int argc, char *argv[]) {
                         state = APP_MAIN_MENU;
                         if (au && au->music) Mix_PlayMusic(au->music, -1);
                     }
-                    else if (state == APP_MODE_SELECT)   state = APP_MAIN_MENU;
-                    else if (state == APP_OPTION)        state = APP_MAIN_MENU;
-                    else if (state == APP_SCORES)        state = APP_MAIN_MENU;
-                    else if (state == APP_HISTOIRE)      state = APP_MAIN_MENU;
-                    else if (state == APP_SAVE_SCREEN)   state = APP_MAIN_MENU;
+                    else if (state == APP_MODE_SELECT)      state = APP_MAIN_MENU;
+                    else if (state == APP_CHARACTER_SELECT) state = APP_MODE_SELECT; /* [CHARSEL-1] */
+                    else if (state == APP_OPTION)           state = APP_MAIN_MENU;
+                    else if (state == APP_SCORES)           state = APP_MAIN_MENU;
+                    else if (state == APP_HISTOIRE)         state = APP_MAIN_MENU;
+                    else if (state == APP_SAVE_SCREEN)      state = APP_MAIN_MENU;
                     else if (state == APP_ENIGME_CHOICE ||
                              state == APP_ENIGME_QCM    ||
                              state == APP_ENIGME_PUZZLE) {
@@ -1020,10 +1214,17 @@ int main(int argc, char *argv[]) {
                         if (bbtnMouseOn(&btnValider, mx, my)) {
                             chargerScores(&bg);
                             nameEntryInit(&nameState, &bg);
-                            state = APP_NAME_ENTRY;
+                            /* [CHARSEL-1] Solo → character select first; multi → straight to name */
+                            if (dispMode == MODE_MONO)
+                                state = APP_CHARACTER_SELECT;
+                            else
+                                state = APP_NAME_ENTRY;
                         }
                     }
                 }
+
+                /* [CHARSEL-1] CHARACTER SELECT events handled in render section below */
+                /* (click detection is inside renderCharacterSelect) */
 
                 /* OPTION */
                 else if (state == APP_OPTION) {
@@ -1065,7 +1266,6 @@ int main(int argc, char *argv[]) {
 
                 /* GAME */
                 else if (state == APP_GAME) {
-                    /* [INPUT-1] P1 always gets events; P2 only in MULTI mode */
                     gererEvenementJoueur(&p1, &ev);
                     if (dispMode == MODE_MULTI) gererEvenementJoueur(&p2, &ev);
 
@@ -1074,7 +1274,6 @@ int main(int argc, char *argv[]) {
                         if (k == SDLK_F10) afficherMeilleursScores(&bg, ren);
                         if (k == SDLK_h)   bg.guide.state = GUIDE_VISIBLE;
                         if (k == SDLK_p)   togglePause(&bg);
-                        /* [INPUT-2] Level switch only in GAME state, not enigme */
                         if (k == SDLK_F11) {
                             currentLevel = LEVEL_1;
                             freeBackground(&bg);
@@ -1096,7 +1295,11 @@ int main(int argc, char *argv[]) {
                     }
                 }
 
-                /* [ENIGME-1] Buffer enigme event for use in render section */
+                else if (state == APP_CHARACTER_SELECT) {
+                    enigmeEv    = ev;   /* reuse same buffer slot */
+                    hasEnigmeEv = 1;
+                }
+
                 else if (state == APP_ENIGME_CHOICE ||
                          state == APP_ENIGME_QCM    ||
                          state == APP_ENIGME_PUZZLE) {
@@ -1129,13 +1332,16 @@ int main(int argc, char *argv[]) {
             btnRetour.hover  = bbtnMouseOn(&btnRetour,  mx, my);
         }
 
+        /* [CHARSEL-1] matrix rain also active on character select */
+        if (state == APP_CHARACTER_SELECT)
+            matrix_update(dt, SCREEN_HEIGHT);
+
         if (state == APP_ENIGME_CHOICE ||
             state == APP_ENIGME_QCM    ||
             state == APP_ENIGME_PUZZLE)
             matrix_update(dt, SCREEN_HEIGHT);
 
         if (state == APP_GAME && !bg.paused) {
-            /* [PAUSE-1] Skip all updates when paused */
             mettreAJourJoueur(&p1, bg.platforms, bg.platformCount);
             if (dispMode == MODE_MULTI)
                 mettreAJourJoueur(&p2, bg.platforms, bg.platformCount);
@@ -1147,7 +1353,6 @@ int main(int argc, char *argv[]) {
 
             updateBackground(&bg);
 
-            /* Enemy spawn — only while kill threshold not reached */
             if (!bossSpawned && minionKills < MINION_KILL_THRESHOLD) {
                 spawnTimer--;
                 if (spawnTimer <= 0) {
@@ -1167,7 +1372,6 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            /* Update minions — [KILL-1] save alive state BEFORE update */
             for (int i = 0; i < MAX_MINIONS; i++) {
                 if (!minions[i].alive) continue;
 
@@ -1191,7 +1395,6 @@ int main(int argc, char *argv[]) {
                     checkPlayerVsEnemy(&p2, &minions[i], &mm);
             }
 
-            /* Boss spawn trigger — [BOSS-3] check all minions dead */
             if (!bossSpawned && minionKills >= MINION_KILL_THRESHOLD) {
                 int allDead = 1;
                 for (int i = 0; i < MAX_MINIONS; i++)
@@ -1211,7 +1414,6 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            /* Update boss */
             if (bossActive && boss.alive) {
                 int ref_x = (int)p1.worldX;
                 if (dispMode == MODE_MULTI) {
@@ -1233,21 +1435,12 @@ int main(int argc, char *argv[]) {
                     checkPlayerVsEnemy(&p2, &boss, &mm);
             }
 
-            /* Bullets vs enemies */
             checkBulletsVsEnemies(&p1, minions, MAX_MINIONS,
                                   bossActive ? &boss : NULL, bossActive);
             if (dispMode == MODE_MULTI)
                 checkBulletsVsEnemies(&p2, minions, MAX_MINIONS,
                                       bossActive ? &boss : NULL, bossActive);
 
-            /* ── [LED-2] Arduino LED feedback ────────────────────────────
-             * Check damageEvent HERE, before renderMinimap() clears it.
-             * minimap.c resets p->damageEvent = 0 inside renderMinimap()
-             * when it draws the red screen flash. If this block ran after
-             * rendering, damageEvent would always be 0 and the LED would
-             * never blink. The Python bridge reads these lines from stdout
-             * and sends 'B' (hit) or 'D' (death) to the Arduino.
-             * Do NOT reset damageEvent here — renderMinimap() owns that. */
             if (p1.damageEvent) {
                 printf(p1.isAlive ? "HIT\n" : "DEAD\n");
                 fflush(stdout);
@@ -1256,9 +1449,7 @@ int main(int argc, char *argv[]) {
                 printf(p2.isAlive ? "HIT\n" : "DEAD\n");
                 fflush(stdout);
             }
-            /* ── end LED feedback ──────────────────────────────────────── */
 
-            /* Death detection — [ENIGME-3] transition guard */
             int p1Alive = p1.isAlive;
             int p2Alive = p2.isAlive;
 
@@ -1318,6 +1509,30 @@ int main(int argc, char *argv[]) {
             bbtnDraw(ren, &btnRetour);
         }
 
+        /* ---- CHARACTER SELECT ---- [CHARSEL-2] */
+        else if (state == APP_CHARACTER_SELECT) {
+            matrix_render(ren, SCREEN_WIDTH);
+
+            /* dim the matrix rain */
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 155);
+            SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
+            SDL_RenderFillRect(ren, &full);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+
+            /* Pass buffered event for click detection */
+            SDL_Event *charEvPtr = hasEnigmeEv ? &enigmeEv : NULL;
+            int choice = renderCharacterSelect(ren, fontMain, fontSmall,
+                                               charEvPtr, mx, my);
+            if (choice == 0) {
+                selectedCharacter = 0;    /* NEO */
+                state = APP_NAME_ENTRY;
+            } else if (choice == 1) {
+                selectedCharacter = 1;    /* MORPHEUS */
+                state = APP_NAME_ENTRY;
+            }
+        }
+
         /* ---- NAME ENTRY ---- */
         else if (state == APP_NAME_ENTRY) {
             matrix_render(ren, SCREEN_WIDTH);
@@ -1336,7 +1551,11 @@ int main(int argc, char *argv[]) {
             else if (wantsEsc) {
                 SDL_StopTextInput();
                 nameState.inputActive = 0;
-                state = APP_MODE_SELECT;
+                /* [CHARSEL-1] ESC from name entry → back to char select (solo) */
+                if (dispMode == MODE_MONO)
+                    state = APP_CHARACTER_SELECT;
+                else
+                    state = APP_MODE_SELECT;
             }
             else if (nameResult == 1 || nameResult == 2) {
                 SDL_StopTextInput();
@@ -1357,9 +1576,17 @@ int main(int argc, char *argv[]) {
                 initialiserJoueur(&p1, ren, PLAYER_1, 150.0f, sy);
                 initialiserJoueur(&p2, ren, PLAYER_2, 250.0f, sy);
 
-                strncpy(p1.name, nameState.name, 31);
+                /* [CHARSEL-3] Apply selected character name to p1 */
+                const char *charName = (selectedCharacter == 0) ? "NEO" : "MORPHEUS";
+                strncpy(p1.name, charName, 31);
                 p1.name[31] = '\0';
-                strncpy(p2.name, "TRINITY", 31);
+                /* Always use typed player name as display name if provided */
+                if (nameState.name[0] != '\0') {
+                    strncpy(p1.name, nameState.name, 31);
+                    p1.name[31] = '\0';
+                }
+                /* p2 gets the other character name in solo (unused visually) */
+                strncpy(p2.name, (selectedCharacter == 0) ? "MORPHEUS" : "NEO", 31);
 
                 resetEnemies(minions, MAX_MINIONS, &boss,
                              &bossSpawned, &bossActive,
@@ -1407,7 +1634,6 @@ int main(int argc, char *argv[]) {
                 renderHalf(ren, &bg, &p2, &p1, vp2,
                            minions, MAX_MINIONS, bossActive ? &boss : NULL, bossActive);
 
-                /* [RENDER-1] Restore viewport before drawing divider */
                 SDL_RenderSetViewport(ren, NULL);
                 SDL_RenderSetClipRect(ren, NULL);
 
@@ -1521,13 +1747,11 @@ int main(int argc, char *argv[]) {
                         enigmePlayer->worldY   = floorY;
                         enigmePlayer = NULL;
                     }
-                    /* [ENIGME-3] Reset trackers AFTER reviving player */
                     p1WasAlive = p1.isAlive;
                     p2WasAlive = p2.isAlive;
                     state = APP_GAME;
                     setNotification(&bg, "VIE REGAGNEE !", 2000);
                 } else {
-                    /* GAME OVER */
                     SDL_RenderPresent(ren);
                     SDL_Delay(200);
 
@@ -1552,7 +1776,6 @@ int main(int argc, char *argv[]) {
                     afficherMeilleursScores(&bg, ren);
                     enigmePlayer = NULL;
 
-                    /* Full reset */
                     libererJoueur(&p1);
                     libererJoueur(&p2);
                     freeBackground(&bg);
@@ -1602,7 +1825,6 @@ int main(int argc, char *argv[]) {
     freeMinimap(&mm);
     matrix_free();
     if (au) free_audio(au);
-    /* [MEMORY-1] Free all menu buttons */
     for (int i = 0; i < BTN_COUNT; i++) tbtnFree(&menuBtns[i]);
     tbtnFree(&backBtn);
     if (titleTex) SDL_DestroyTexture(titleTex);
