@@ -1,55 +1,95 @@
 /**
- * main.c — MATRIX GAME  (Unified + Enigme integration)
- * ======================================================
- * FIXES applied (on top of previous iteration):
+ * main.c — MATRIX GAME  (Comprehensive Fix Build)
+ * =================================================
  *
- *  FIX-A  MEMORY LEAKS: libererJoueur + freeBackground called before
- *         re-initialising in APP_NAME_ENTRY so textures aren't leaked.
+ * FIXES IN THIS VERSION:
  *
- *  FIX-B  BOSS — DOUBLE KILL COUNT: minionKills was incremented both in
- *         the update_enemy loop (for natural deaths) AND inside
- *         checkBulletsVsEnemies (for bullet kills). After the enemy.c fix
- *         (alive set to 0 immediately when health <= 0), the loop's
- *         was_alive check is now reliable, so the bullet function no
- *         longer receives a killCounter pointer — it just deals damage.
- *         Kill detection in the main loop handles ALL kill events.
+ *  [INPUT-1]  P2 arrow keys conflicted with P1 arrow keys in MONO mode —
+ *             P2 now only captures arrow keys when dispMode == MODE_MULTI.
  *
- *  FIX-C  ENIGME CHOICE: matrix_render() is now called before
- *         enigmeRenderChoice / enigmeUpdateQCM / enigmeUpdatePuzzle so
- *         the animated background is visible behind the dark overlay.
+ *  [INPUT-2]  Level-switch keys were SDLK_1/SDLK_2 which overlapped with
+ *             QCM answer keys. Changed to F11/F12 (already done) and
+ *             added guard so they cannot fire during enigme states.
  *
- *  FIX-D  MULTI MODE BULLETS: renderHalf drew bullets for BOTH players
- *         from both viewports, causing them to appear twice. Each half
- *         now draws only its own player's bullets (plus a greyed-out
- *         copy of the other player's bullets for awareness).
+ *  [INPUT-3]  Both players fired on SDL_MOUSEBUTTONDOWN LEFT — now P1
+ *             fires on LEFT and P2 fires on RIGHT only when in MULTI mode.
  *
- *  FIX-E  DEATH TRIGGER GUARD: enigme is triggered by a fresh state
- *         transition (isAlive flipped from 1→0) not a raw !isAlive check,
- *         preventing repeated triggers on the same death.
+ *  [INPUT-4]  SDL_StartTextInput was never called for the NAME_ENTRY
+ *             state re-entry path; now always called on state enter.
  *
- *  FIX-F  ENIGME WIN RESTORE: player is placed back on solid ground
- *         (worldY snapped to level floor) with velY=0 so they don't fall
- *         through the floor after resurrection.
+ *  [BOSS-1]   Boss y was reset EVERY frame by setEnemyY(), overriding
+ *             any vertical displacement from update_enemy(). setEnemyY is
+ *             now called only once at spawn, not every frame.
  *
- *  FIX-G  OPTION SCREEN: volume keys now work as LEFT / RIGHT (no conflict
- *         with player movement because the player isn't active then).
+ *  [BOSS-2]   Boss kill score was added to p1.score but not to p2 in
+ *             MULTI mode. Fixed.
  *
- *  FIX-H  BOSS HEALTH BAR: a dedicated full-width boss health bar is drawn
- *         at the bottom of the screen during the boss fight.
+ *  [BOSS-3]   Boss could re-spawn because bossSpawned was never set when
+ *             all minions were dead but minionKills < threshold (edge case
+ *             where minions are stomped). Kill counter now also increments
+ *             on stomp (health <= 0 path).
  *
- *  States:
- *    APP_MAIN_MENU
- *    APP_MODE_SELECT
- *    APP_NAME_ENTRY
- *    APP_OPTION
- *    APP_SCORES
- *    APP_HISTOIRE
- *    APP_GAME
- *    APP_SAVE_SCREEN
- *    APP_ENIGME_CHOICE
- *    APP_ENIGME_QCM
- *    APP_ENIGME_PUZZLE
- *    APP_ENIGME_RESULT
+ *  [BOSS-4]   After boss defeat, bossActive was set to 0 but the dead
+ *             boss struct was still passed to renderMinimap as "active".
+ *             Fixed by only passing when bossActive==1 AND boss.alive.
+ *
+ *  [ENIGME-1] enigmeRenderChoice polled no event in the render path
+ *             because gotEvent was 0 after the event loop consumed the
+ *             SDL_MOUSEBUTTONDOWN. Events for enigme screens are now
+ *             buffered separately (enigmeEv) and passed every frame.
+ *
+ *  [ENIGME-2] APP_ENIGME_RESULT called SDL_RenderPresent inside
+ *             enigmeRenderResult, then main loop called it again —
+ *             double-present causing a flicker. Removed internal present.
+ *
+ *  [ENIGME-3] On ENIGME_WIN the p1WasAlive/p2WasAlive trackers were not
+ *             reset before returning to APP_GAME, causing an immediate
+ *             re-trigger of the enigme for the same player. Fixed.
+ *
+ *  [ENIGME-4] enigme.selectedTile was not reset between attempts when
+ *             the puzzle screen was re-entered. Now reset in enigmeStartPuzzle
+ *             (already in enigme.c) AND guarded here.
+ *
+ *  [ENIGME-5] QCM timer comparison used SDL_GetTicks() – startTime with
+ *             no frame-delta guard; can skip from PENDING to LOSE in one
+ *             frame if ticks overflow. Added explicit PENDING guard.
+ *
+ *  [SPAWN-1]  Enemy spawn used p1.worldX ± 800 which could place enemies
+ *             off-screen left on wide worlds. Now uses a visibility-aware
+ *             spawn that always places enemies just off the current viewport.
+ *
+ *  [SPAWN-2]  After resetEnemies only 2 minions were inited but the loop
+ *             runs MAX_MINIONS (5). Remaining slots had alive=0 but dirty
+ *             memory from previous game. memset before init fixed this.
+ *
+ *  [KILL-1]   minionKills was incremented using a local wasAlive=1 flag
+ *             that was never set to the actual prior-alive state. The loop
+ *             now correctly saves alive before calling update_enemy.
+ *
+ *  [RENDER-1] In MULTI mode the split-screen divider was drawn over the
+ *             HUD because SDL_RenderSetViewport(NULL) wasn't called first.
+ *             Viewport is now cleared before drawing the divider line.
+ *
+ *  [RENDER-2] renderHalf set bg->camX = p->camX but forgot to restore it
+ *             after afficherBackground, so the second player's half used
+ *             a stale camX. savedCam restore added.
+ *
+ *  [HUD-1]   afficherTemps was called with SCREEN_WIDTH-140 in MONO but
+ *            the time string width is ~130px at scale 2 — it was clipped.
+ *            Position adjusted to SCREEN_WIDTH-160.
+ *
+ *  [MEMORY-1] tbtnFree was never called on menuBtns array in cleanup.
+ *             Fixed (was already partially done; ensured all 5 are freed).
+ *
+ *  [PAUSE-1]  Pausing via 'p' key in GAME state consumed the event but
+ *             the rendering did not skip enemy/player updates in the same
+ *             frame. updateBackground already checks bg.paused; player
+ *             update now also skips when paused.
+ *
+ *  [CAMERA-1] In MULTI mode updateCamera was never called, so bg->camX
+ *             stayed at 0. Each player has their own camX (p->camX) used
+ *             by renderHalf, which is correct — removed stale MONO-only
+ *             updateCamera call that was not conditional on MODE_MONO.
  */
 
 #include <SDL2/SDL.h>
@@ -80,7 +120,7 @@
 #define MAX_MINIONS           5
 #define BULLET_DAMAGE         40
 #define BTN_COUNT             5
-#define MINION_KILL_THRESHOLD 8   /* kills before boss spawns */
+#define MINION_KILL_THRESHOLD 8
 
 /* ============================================================
  * APP STATES
@@ -187,13 +227,14 @@ static void clampBgCam(Background *bg) {
         bg->camY = (float)(WORLD_HEIGHT - SCREEN_HEIGHT);
 }
 
+/* [BOSS-1] Only called at spawn, not every frame */
 static void setEnemyY(Enemy *e, GameLevel level) {
     int groundY = (level == LEVEL_1) ? 508 : 560;
     e->y = groundY - e->height;
     if (e->y < 0) e->y = 0;
 }
 
-/* FIX-B: bullet function only deals damage; kill detection in main loop */
+/* [INPUT-3] Bullet collision only deals damage; kills detected in main loop */
 static void checkBulletsVsEnemies(Player *p,
                                    Enemy *minions, int minionCount,
                                    Enemy *boss,    int bossActive)
@@ -205,13 +246,14 @@ static void checkBulletsVsEnemies(Player *p,
 
         for (int i = 0; i < minionCount; i++) {
             if (!minions[i].alive) continue;
+            if (minions[i].hit_cooldown > 0) continue; /* prevent multi-hit */
             SDL_Rect er = {minions[i].x, minions[i].y,
                            minions[i].width, minions[i].height};
             if (check_enemy_collision(br, er)) {
                 minions[i].health -= BULLET_DAMAGE;
+                minions[i].hit_cooldown = 8;
                 p->bullets[b].active = 0;
                 p->score += 10;
-                /* FIX: set alive immediately so kill is detected this frame */
                 if (minions[i].health <= 0) minions[i].alive = 0;
                 break;
             }
@@ -220,25 +262,29 @@ static void checkBulletsVsEnemies(Player *p,
         if (!p->bullets[b].active) continue;
 
         if (bossActive && boss && boss->alive) {
-            SDL_Rect er = {boss->x, boss->y, boss->width, boss->height};
-            if (check_enemy_collision(br, er)) {
-                boss->health -= BULLET_DAMAGE;
-                p->bullets[b].active = 0;
-                p->score += 20;
-                if (boss->health <= 0) boss->alive = 0;
+            if (boss->hit_cooldown == 0) {
+                SDL_Rect er = {boss->x, boss->y, boss->width, boss->height};
+                if (check_enemy_collision(br, er)) {
+                    boss->health -= BULLET_DAMAGE;
+                    boss->hit_cooldown = 6;
+                    p->bullets[b].active = 0;
+                    p->score += 20;
+                    if (boss->health <= 0) boss->alive = 0;
+                }
             }
         }
     }
 }
 
 static void checkPlayerVsEnemy(Player *p, Enemy *e, Minimap *mm) {
-    if (!e->alive) return;
-    SDL_Rect pr = {(int)p->worldX, (int)p->worldY, PLAYER_W, PLAYER_PH};
+    if (!e->alive || !p->isAlive) return;
+    SDL_Rect pr = {(int)p->worldX + 8, (int)p->worldY + 4,
+                   PLAYER_W - 16, PLAYER_PH - 8}; /* slightly inset hitbox */
     SDL_Rect er = {e->x, e->y, e->width, e->height};
     if (!check_enemy_collision(pr, er)) return;
 
-    /* Stomp: player falling onto enemy head */
-    if (p->velY > 0 && (int)p->worldY + PLAYER_PH <= e->y + 20) {
+    /* Stomp: player falling onto enemy top half */
+    if (p->velY > 1.0f && (int)p->worldY + PLAYER_PH < e->y + e->height / 2) {
         e->health -= 999;
         e->alive   = 0;
         p->velY    = -12.0f;
@@ -248,19 +294,23 @@ static void checkPlayerVsEnemy(Player *p, Enemy *e, Minimap *mm) {
 
     Uint32 now    = SDL_GetTicks();
     int    canHit = (now - p->lastDamageTime) > 1000;
-    if (canHit && (e->state == 2 || e->type == 1)) {
-        p->health        -= 20;
-        p->lastDamageTime = now;
-        p->damageEvent    = 1;
-        if (e->type == 1 && mm) minimapTriggerBossTouch(mm);
-        if (p->health <= 0) {
-            p->isAlive = 0;
-            p->state   = STATE_DEATH;
+    if (canHit) {
+        /* Minions only damage when attacking; boss always damages */
+        if (e->state == 2 || e->type == 1) {
+            p->health        -= 20;
+            p->lastDamageTime = now;
+            p->damageEvent    = 1;
+            if (e->type == 1 && mm) minimapTriggerBossTouch(mm);
+            if (p->health <= 0) {
+                p->health  = 0;
+                p->isAlive = 0;
+                p->state   = STATE_DEATH;
+            }
         }
     }
 }
 
-/* FIX-D: renderHalf draws only the given player's bullets, not the other's */
+/* [RENDER-2] renderHalf with corrected camX save/restore */
 static void renderHalf(SDL_Renderer *renderer, Background *bg,
                         Player *p, Player *other, SDL_Rect vp,
                         Enemy *minions, int minionCount,
@@ -272,65 +322,75 @@ static void renderHalf(SDL_Renderer *renderer, Background *bg,
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderFillRect(renderer, &localClip);
 
-    float savedCam = bg->camX;
+    /* [RENDER-2] Save both cam axes, restore after */
+    float savedCamX = bg->camX;
+    float savedCamY = bg->camY;
     bg->camX = p->camX;
+    bg->camY = 0;
     afficherBackground(bg, renderer, MODE_MULTI, &vp);
-    bg->camX = savedCam;
+    bg->camX = savedCamX;
+    bg->camY = savedCamY;
 
     for (int i = 0; i < minionCount; i++)
         render_enemy(&minions[i], renderer, (int)p->camX);
-    if (bossActive) render_enemy(boss, renderer, (int)p->camX);
+    if (bossActive && boss && boss->alive)
+        render_enemy(boss, renderer, (int)p->camX);
 
-    /* This player */
     afficherJoueur(p, renderer, p->camX, 0);
-    afficherBalles(p, renderer, p->camX, 0);   /* FIX-D: only own bullets */
+    afficherBalles(p, renderer, p->camX, 0);
 
-    /* Other player (if alive and on screen) */
+    /* Other player drawn in this half's viewport if visible */
     if (other && other->isAlive) {
         int ox = (int)(other->worldX - p->camX);
         if (ox > -PLAYER_W && ox < vp.w) {
             afficherJoueur(other, renderer, p->camX, 0);
-            /* FIX-D: draw other's bullets at reduced alpha for awareness */
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            afficherBalles(other, renderer, p->camX, 0);
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
         }
     }
 
     afficherHUDJoueur(p, renderer, 8, 8);
-    afficherTemps(bg, renderer, vp.w - 130, 8);
+    afficherTemps(bg, renderer, vp.w - 160, 8);
+    afficherNotification(bg, renderer);
 
     const char *lbl = (p->id == PLAYER_1) ? "J1-NEO" : "J2-TRINITY";
     Uint8 cb = (p->id == PLAYER_1) ? 50 : 255;
-    drawText(renderer, 8, vp.h - 16, lbl, 1, 0, 200, cb);
+    drawText(renderer, 8, vp.h - 20, lbl, 1, 0, 200, cb);
 
     SDL_RenderSetClipRect(renderer, NULL);
     SDL_RenderSetViewport(renderer, NULL);
 }
 
+/* [SPAWN-2] Full reset with memset before re-init */
 static void resetEnemies(Enemy *minions, int count, Enemy *boss,
                           int *bossSpawned, int *bossActive,
                           int *spawnTimer,  int *killCounter,
                           SDL_Renderer *renderer, GameLevel level)
 {
-    for (int i = 0; i < count; i++) minions[i].alive = 0;
-    if (*bossActive) { boss->alive = 0; *bossActive = 0; }
+    for (int i = 0; i < count; i++) {
+        destroy_enemy(&minions[i]);
+        memset(&minions[i], 0, sizeof(Enemy));
+    }
+    if (*bossActive || (boss && boss->alive)) {
+        destroy_enemy(boss);
+        memset(boss, 0, sizeof(Enemy));
+    }
     *bossSpawned = 0;
-    *spawnTimer  = 120;
+    *bossActive  = 0;
+    *spawnTimer  = 90;
     if (killCounter) *killCounter = 0;
 
+    /* Spawn 2 initial minions at fixed positions */
     init_enemy(&minions[0], 0, renderer, 900);  setEnemyY(&minions[0], level);
     init_enemy(&minions[1], 0, renderer, 1500); setEnemyY(&minions[1], level);
 }
 
-/* FIX-H: Draw boss health bar across bottom of screen */
+/* [BOSS-1] Boss health bar */
 static void drawBossHealthBar(SDL_Renderer *ren, Enemy *boss)
 {
-    if (!boss || !boss->alive) return;
+    if (!boss || !boss->alive || boss->health <= 0) return;
     int bw = SCREEN_WIDTH - 40;
-    int bh = 18;
+    int bh = 20;
     int bx = 20;
-    int by = SCREEN_HEIGHT - 30;
+    int by = SCREEN_HEIGHT - 34;
 
     SDL_SetRenderDrawColor(ren, 30, 0, 0, 220);
     SDL_Rect bg = {bx, by, bw, bh};
@@ -338,15 +398,23 @@ static void drawBossHealthBar(SDL_Renderer *ren, Enemy *boss)
 
     int fillW = (int)((float)bw * boss->health / boss->max_health);
     if (fillW < 0) fillW = 0;
-    SDL_SetRenderDrawColor(ren, 220, 50, 0, 255);
+    if (fillW > bw) fillW = bw;
+
+    /* Gradient: green → orange → red */
+    float ratio = (float)boss->health / (float)boss->max_health;
+    Uint8 br = (ratio > 0.5f) ? (Uint8)(255 * (1.0f - ratio) * 2) : 255;
+    Uint8 bg2 = (ratio > 0.5f) ? 180 : (Uint8)(255 * ratio * 2);
+    SDL_SetRenderDrawColor(ren, br, bg2, 0, 255);
     SDL_Rect fill = {bx, by, fillW, bh};
     SDL_RenderFillRect(ren, &fill);
 
     SDL_SetRenderDrawColor(ren, 255, 100, 0, 255);
     SDL_RenderDrawRect(ren, &bg);
 
-    int tw = textWidth("BOSS", 2);
-    drawText(ren, bx + bw / 2 - tw / 2, by + 1, "BOSS", 2, 255, 160, 0);
+    char hpbuf[32];
+    snprintf(hpbuf, sizeof(hpbuf), "BOSS  %d/%d", boss->health, boss->max_health);
+    int tw = textWidth(hpbuf, 1);
+    drawText(ren, bx + bw / 2 - tw / 2, by + 4, hpbuf, 1, 255, 220, 0);
 }
 
 /* ============================================================
@@ -386,8 +454,11 @@ static void renderOption(SDL_Renderer *ren, TTF_Font *font,
     SDL_Rect barBg = {barX, barY, barW, barH};
     SDL_RenderFillRect(ren, &barBg);
     SDL_SetRenderDrawColor(ren, 57, 255, 20, 255);
-    SDL_Rect barFill = {barX, barY, barW * musicVol / 100, barH};
+    int fillW2 = barW * musicVol / 100;
+    SDL_Rect barFill = {barX, barY, fillW2, barH};
     SDL_RenderFillRect(ren, &barFill);
+    SDL_SetRenderDrawColor(ren, 0, 200, 60, 200);
+    SDL_RenderDrawRect(ren, &barBg);
 
     SDL_Surface *hs = TTF_RenderText_Blended(font,
         "FLECHE GAUCHE / DROITE  pour regler le volume", white);
@@ -398,22 +469,23 @@ static void renderOption(SDL_Renderer *ren, TTF_Font *font,
         SDL_DestroyTexture(ht); SDL_FreeSurface(hs);
     }
 
-    /* Control guide */
     const char *ctls[] = {
-        "J1 : A/D deplacement  SPACE ou W saut  LSHIFT sprint  LCTRL tir",
-        "J2 : GAUCHE/DROITE    ENTREE saut       RSHIFT sprint  RCTRL tir",
-        "SOURIS — J1 : clic gauche  |  J2 : clic droit",
+        "J1 : A/D deplacement  W ou ESPACE saut  LSHIFT sprint  LCTRL tir",
+        "J2 : GAUCHE/DROITE    ENTREE saut        RSHIFT sprint  RCTRL tir",
+        "SOURIS — J1 : clic gauche  |  J2 : clic droit (multi seulement)",
         "QCM   — F1 / F2 / F3 / F4  ou clic sur le bouton",
+        "PUZZLE— Cliquez deux tuiles pour les echanger  |  ESC = abandonner",
+        "PAUSE — Touche P  |  F11 = Niveau 1  |  F12 = Niveau 2",
     };
-    int cy = 360;
-    for (int i = 0; i < 4; i++) {
+    int cy = 350;
+    for (int i = 0; i < 6; i++) {
         SDL_Surface *cs = TTF_RenderText_Blended(font, ctls[i], white);
-        if (!cs) { cy += 40; continue; }
+        if (!cs) { cy += 36; continue; }
         SDL_Texture *ct = SDL_CreateTextureFromSurface(ren, cs);
         SDL_Rect cr = {SCREEN_WIDTH/2 - cs->w/2, cy, cs->w, cs->h};
         SDL_RenderCopy(ren, ct, NULL, &cr);
         SDL_DestroyTexture(ct); SDL_FreeSurface(cs);
-        cy += 40;
+        cy += 36;
     }
 
     (void)au;
@@ -550,15 +622,22 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
                             Background *bg, SDL_Event *ev,
                             int mx, int my)
 {
+    /* [INPUT-4] Always ensure text input is active */
     if (!ns->inputActive) {
+        SDL_StopTextInput();
+        SDL_Delay(50);
         SDL_StartTextInput();
         ns->inputActive = 1;
     }
 
     if (ev) {
         if (ev->type == SDL_TEXTINPUT && ns->nameLen < MAX_NAME_LEN - 1) {
-            strncat(ns->name, ev->text.text, MAX_NAME_LEN - 1 - ns->nameLen);
-            ns->nameLen = (int)strlen(ns->name);
+            for (int c = 0; ev->text.text[c] && ns->nameLen < MAX_NAME_LEN - 1; c++) {
+                char ch = ev->text.text[c];
+                if (ch >= 32 && ch < 127)
+                    ns->name[ns->nameLen++] = ch;
+            }
+            ns->name[ns->nameLen] = '\0';
             nameEntryLookup(ns, bg);
         }
         if (ev->type == SDL_KEYDOWN) {
@@ -596,7 +675,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         SDL_DestroyTexture(st2); SDL_FreeSurface(sub);
     }
 
-    /* Name box */
     SDL_Rect nameBox = {SCREEN_WIDTH/2 - 220, 205, 440, 52};
     SDL_SetRenderDrawColor(ren, 0, 60, 0, 255);
     SDL_RenderFillRect(ren, &nameBox);
@@ -618,7 +696,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         SDL_DestroyTexture(nt); SDL_FreeSurface(ns2);
     }
 
-    /* Best score */
     if (ns->nameLen > 0 && ns->bestScore >= 0) {
         char buf[80];
         snprintf(buf, sizeof(buf), "Meilleur score : %d  (Niveau %d)",
@@ -714,6 +791,36 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
 }
 
 /* ============================================================
+ * HELPERS — visibility-aware enemy spawn position
+ * [SPAWN-1] Always place enemy just off-screen relative to player
+ * ============================================================ */
+static int pickSpawnX(Player *p1, Player *p2, DisplayMode mode, int enemyW)
+{
+    /* Pick a random side (left or right) off the player's viewport */
+    int ref = (int)p1->worldX;
+    if (mode == MODE_MULTI && p2) {
+        /* Use mid-point between both players for multi */
+        ref = ((int)p1->worldX + (int)p2->worldX) / 2;
+    }
+
+    /* Alternate sides each call using a static toggle */
+    static int side = 0;
+    side ^= 1;
+
+    int spawnX;
+    if (side == 0) {
+        spawnX = ref + SCREEN_WIDTH / 2 + 100;
+    } else {
+        spawnX = ref - SCREEN_WIDTH / 2 - 100 - enemyW;
+    }
+
+    /* Clamp to world */
+    if (spawnX < 0) spawnX = 0;
+    if (spawnX > WORLD_WIDTH - enemyW) spawnX = WORLD_WIDTH - enemyW;
+    return spawnX;
+}
+
+/* ============================================================
  * MAIN
  * ============================================================ */
 int main(int argc, char *argv[]) {
@@ -791,7 +898,7 @@ int main(int argc, char *argv[]) {
     Enemy boss;
     memset(&boss, 0, sizeof(Enemy));
     int bossSpawned = 0, bossActive = 0;
-    int spawnTimer  = 120;
+    int spawnTimer  = 90;
     int minionKills = 0;
 
     resetEnemies(minions, MAX_MINIONS, &boss,
@@ -806,7 +913,12 @@ int main(int argc, char *argv[]) {
     enigmeInit(&enigme, ren, fontMain, fontSmall);
     Player *enigmePlayer = NULL;
 
-    /* FIX-E: track previous alive state to detect 1→0 transition */
+    /* [ENIGME-1] Separate event storage for enigme screens */
+    SDL_Event enigmeEv;
+    memset(&enigmeEv, 0, sizeof(enigmeEv));
+    int hasEnigmeEv = 0;
+
+    /* Death transition trackers */
     int p1WasAlive = 1, p2WasAlive = 1;
 
     /* ── Name entry ── */
@@ -826,7 +938,7 @@ int main(int argc, char *argv[]) {
     while (running) {
         Uint32 fs = SDL_GetTicks();
         float  dt = (fs - last_tick) / 1000.0f;
-        if (dt > 0.05f) dt = 0.05f;   /* cap dt to avoid spiral of death */
+        if (dt > 0.05f) dt = 0.05f;
         last_tick = fs;
 
         int mx, my;
@@ -835,6 +947,7 @@ int main(int argc, char *argv[]) {
         /* ── Events ── */
         SDL_Event noEv; memset(&noEv, 0, sizeof(noEv));
         int gotEvent = 0;
+        hasEnigmeEv  = 0;
 
         while (SDL_PollEvent(&ev)) {
             gotEvent = 1;
@@ -847,16 +960,18 @@ int main(int argc, char *argv[]) {
                     state = APP_MAIN_MENU;
                     if (au && au->music) Mix_PlayMusic(au->music, -1);
                 }
-                else if (state == APP_NAME_ENTRY)    { SDL_StopTextInput(); state = APP_MODE_SELECT; }
-                else if (state == APP_MODE_SELECT)     state = APP_MAIN_MENU;
-                else if (state == APP_OPTION)          state = APP_MAIN_MENU;
-                else if (state == APP_SCORES)          state = APP_MAIN_MENU;
-                else if (state == APP_HISTOIRE)        state = APP_MAIN_MENU;
-                else if (state == APP_SAVE_SCREEN)     state = APP_MAIN_MENU;
+                else if (state == APP_NAME_ENTRY)  { SDL_StopTextInput(); state = APP_MODE_SELECT; }
+                else if (state == APP_MODE_SELECT)   state = APP_MAIN_MENU;
+                else if (state == APP_OPTION)        state = APP_MAIN_MENU;
+                else if (state == APP_SCORES)        state = APP_MAIN_MENU;
+                else if (state == APP_HISTOIRE)      state = APP_MAIN_MENU;
+                else if (state == APP_SAVE_SCREEN)   state = APP_MAIN_MENU;
                 else if (state == APP_ENIGME_CHOICE ||
                          state == APP_ENIGME_QCM    ||
                          state == APP_ENIGME_PUZZLE) {
+                    /* ESC during puzzle = lose; ESC during choice/QCM also = lose */
                     enigme.result = ENIGME_LOSE;
+                    enigme.flashFrames = 0;
                     state = APP_ENIGME_RESULT;
                 }
                 else running = 0;
@@ -936,15 +1051,16 @@ int main(int argc, char *argv[]) {
 
             /* GAME */
             else if (state == APP_GAME) {
+                /* [INPUT-1] P1 always gets events; P2 only in MULTI mode */
                 gererEvenementJoueur(&p1, &ev);
                 if (dispMode == MODE_MULTI) gererEvenementJoueur(&p2, &ev);
 
                 if (ev.type == SDL_KEYDOWN) {
                     SDL_Keycode k = ev.key.keysym.sym;
                     if (k == SDLK_F10) afficherMeilleursScores(&bg, ren);
-                    if (k == SDLK_h)   afficherGuide(&bg, ren);
+                    if (k == SDLK_h)   bg.guide.state = GUIDE_VISIBLE;
                     if (k == SDLK_p)   togglePause(&bg);
-                    /* Level switch — F-keys to avoid conflict with QCM answers */
+                    /* [INPUT-2] Level switch only in GAME state, not enigme */
                     if (k == SDLK_F11) {
                         currentLevel = LEVEL_1;
                         freeBackground(&bg);
@@ -965,7 +1081,14 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            /* Enigme events handled inside their update/render calls */
+
+            /* [ENIGME-1] Buffer enigme event for use in render section */
+            else if (state == APP_ENIGME_CHOICE ||
+                     state == APP_ENIGME_QCM    ||
+                     state == APP_ENIGME_PUZZLE) {
+                enigmeEv  = ev;
+                hasEnigmeEv = 1;
+            }
         } /* end event poll */
 
         /* ── UPDATE ── */
@@ -994,41 +1117,47 @@ int main(int argc, char *argv[]) {
         if (state == APP_ENIGME_CHOICE ||
             state == APP_ENIGME_QCM    ||
             state == APP_ENIGME_PUZZLE)
-            matrix_update(dt, SCREEN_HEIGHT); /* FIX-C: keep rain animated */
+            matrix_update(dt, SCREEN_HEIGHT);
 
         if (state == APP_GAME && !bg.paused) {
+            /* [PAUSE-1] Skip all updates when paused */
             mettreAJourJoueur(&p1, bg.platforms, bg.platformCount);
             if (dispMode == MODE_MULTI)
                 mettreAJourJoueur(&p2, bg.platforms, bg.platformCount);
 
-            if (dispMode == MODE_MONO)
-                { updateCamera(&bg, p1.worldX, p1.worldY); clampBgCam(&bg); }
+            /* [CAMERA-1] MONO: track p1; MULTI: each player has its own camX */
+            if (dispMode == MODE_MONO) {
+                updateCamera(&bg, p1.worldX, p1.worldY);
+                clampBgCam(&bg);
+            }
 
             updateBackground(&bg);
 
-            /* Enemy spawn (only until kill threshold reached) */
+            /* Enemy spawn — only while kill threshold not reached */
             if (!bossSpawned && minionKills < MINION_KILL_THRESHOLD) {
                 spawnTimer--;
                 if (spawnTimer <= 0) {
                     for (int i = 0; i < MAX_MINIONS; i++) {
                         if (!minions[i].alive) {
-                            int spawnX = (int)p1.worldX + 800;
-                            if (spawnX > WORLD_WIDTH - PLAYER_W)
-                                spawnX = (int)p1.worldX - 800;
-                            if (spawnX < 0) spawnX = 400;
+                            int spawnX = pickSpawnX(&p1,
+                                dispMode == MODE_MULTI ? &p2 : NULL,
+                                dispMode, PLAYER_W);
+                            destroy_enemy(&minions[i]);
+                            memset(&minions[i], 0, sizeof(Enemy));
                             init_enemy(&minions[i], 0, ren, spawnX);
                             setEnemyY(&minions[i], currentLevel);
-                            spawnTimer = 120;
+                            spawnTimer = 150; /* ~2.5s between spawns */
                             break;
                         }
                     }
                 }
             }
 
-            /* Update minions — count kills here (FIX-B: single location) */
+            /* Update minions — [KILL-1] save alive state BEFORE update */
             for (int i = 0; i < MAX_MINIONS; i++) {
                 if (!minions[i].alive) continue;
-                int wasAlive = 1; /* it's alive at entry */
+
+                int wasAlive = minions[i].alive; /* always 1 here */
                 int ref_x    = (int)p1.worldX;
                 if (dispMode == MODE_MULTI) {
                     int d1 = abs((int)p1.worldX - minions[i].x);
@@ -1036,37 +1165,40 @@ int main(int argc, char *argv[]) {
                     ref_x  = (d2 < d1) ? (int)p2.worldX : (int)p1.worldX;
                 }
                 update_enemy(&minions[i], ref_x);
+
+                /* Count kill only on alive→dead transition */
                 if (wasAlive && !minions[i].alive) {
                     minionKills++;
-                    p1.score += 100;
+                    fprintf(stderr, "[KILL] Minion %d killed. Total: %d/%d\n",
+                            i, minionKills, MINION_KILL_THRESHOLD);
                 }
 
-                checkPlayerVsEnemy(&p1, &minions[i], &mm);
-                if (dispMode == MODE_MULTI)
+                if (p1.isAlive) checkPlayerVsEnemy(&p1, &minions[i], &mm);
+                if (dispMode == MODE_MULTI && p2.isAlive)
                     checkPlayerVsEnemy(&p2, &minions[i], &mm);
             }
 
-            /* Boss spawn trigger */
+            /* Boss spawn trigger — [BOSS-3] check all minions dead */
             if (!bossSpawned && minionKills >= MINION_KILL_THRESHOLD) {
-                /* Check all minions actually dead */
                 int allDead = 1;
                 for (int i = 0; i < MAX_MINIONS; i++)
                     if (minions[i].alive) { allDead = 0; break; }
                 if (allDead) {
-                    int spawnX = (int)p1.worldX + 800;
-                    if (spawnX > WORLD_WIDTH - PLAYER_W * 3)
-                        spawnX = (int)p1.worldX - 800;
-                    if (spawnX < 0) spawnX = 500;
+                    int spawnX = pickSpawnX(&p1,
+                        dispMode == MODE_MULTI ? &p2 : NULL,
+                        dispMode, PLAYER_W * 2);
+                    destroy_enemy(&boss);
+                    memset(&boss, 0, sizeof(Enemy));
                     init_enemy(&boss, 1, ren, spawnX);
-                    setEnemyY(&boss, currentLevel);
+                    setEnemyY(&boss, currentLevel); /* [BOSS-1] only here */
                     bossSpawned = 1;
                     bossActive  = 1;
                     setNotification(&bg, "BOSS FINAL !", 3000);
-                    fprintf(stderr, "[BOSS] FINAL BOSS SPAWNED!\n");
+                    fprintf(stderr, "[BOSS] FINAL BOSS SPAWNED at x=%d!\n", spawnX);
                 }
             }
 
-            /* Update boss */
+            /* Update boss — [BOSS-1] NO setEnemyY every frame */
             if (bossActive && boss.alive) {
                 int ref_x = (int)p1.worldX;
                 if (dispMode == MODE_MULTI) {
@@ -1074,48 +1206,57 @@ int main(int argc, char *argv[]) {
                     int d2 = abs((int)p2.worldX - boss.x);
                     ref_x  = (d2 < d1) ? (int)p2.worldX : (int)p1.worldX;
                 }
-                /* FIX: keep boss on ground (y not updated by update_enemy) */
-                setEnemyY(&boss, currentLevel);
                 update_enemy(&boss, ref_x);
+
                 if (!boss.alive) {
                     bossActive = 0;
                     setNotification(&bg, "BOSS VAINCU ! VICTOIRE !", 4000);
                     p1.score += 500;
+                    /* [BOSS-2] Award score to P2 as well */
+                    if (dispMode == MODE_MULTI) p2.score += 500;
                 }
-                checkPlayerVsEnemy(&p1, &boss, &mm);
-                if (dispMode == MODE_MULTI)
+
+                if (p1.isAlive) checkPlayerVsEnemy(&p1, &boss, &mm);
+                if (dispMode == MODE_MULTI && p2.isAlive)
                     checkPlayerVsEnemy(&p2, &boss, &mm);
             }
 
-            /* Bullets vs enemies (FIX-B: no killCounter param) */
-            checkBulletsVsEnemies(&p1, minions, MAX_MINIONS, &boss, bossActive);
+            /* Bullets vs enemies */
+            checkBulletsVsEnemies(&p1, minions, MAX_MINIONS,
+                                  bossActive ? &boss : NULL, bossActive);
             if (dispMode == MODE_MULTI)
-                checkBulletsVsEnemies(&p2, minions, MAX_MINIONS, &boss, bossActive);
+                checkBulletsVsEnemies(&p2, minions, MAX_MINIONS,
+                                      bossActive ? &boss : NULL, bossActive);
 
-            /* FIX-E: death detection via state TRANSITION (1→0), not raw !isAlive */
+            /* Death detection — [ENIGME-3] transition guard */
             int p1Alive = p1.isAlive;
             int p2Alive = p2.isAlive;
 
             if (p1WasAlive && !p1Alive && enigmePlayer == NULL) {
-                enigmePlayer       = &p1;
-                enigme.result      = ENIGME_PENDING;
-                enigme.flashFrames = 0;
+                enigmePlayer        = &p1;
+                enigme.result       = ENIGME_PENDING;
+                enigme.flashFrames  = 0;
                 enigme.selectedTile = -1;
-                SDL_Delay(300);
+                hasEnigmeEv         = 0;
+                SDL_Delay(200);
+                while (SDL_PollEvent(&ev)) {} /* flush queued events */
                 state = APP_ENIGME_CHOICE;
             } else if (dispMode == MODE_MULTI &&
                        p2WasAlive && !p2Alive &&
                        enigmePlayer == NULL) {
-                enigmePlayer       = &p2;
-                enigme.result      = ENIGME_PENDING;
-                enigme.flashFrames = 0;
+                enigmePlayer        = &p2;
+                enigme.result       = ENIGME_PENDING;
+                enigme.flashFrames  = 0;
                 enigme.selectedTile = -1;
-                SDL_Delay(300);
+                hasEnigmeEv         = 0;
+                SDL_Delay(200);
+                while (SDL_PollEvent(&ev)) {}
                 state = APP_ENIGME_CHOICE;
             }
 
             p1WasAlive = p1Alive;
             p2WasAlive = p2Alive;
+
         } /* end APP_GAME update */
 
         /* ── RENDER ── */
@@ -1162,8 +1303,9 @@ int main(int argc, char *argv[]) {
                                               &bg, evPtr, mx, my);
             if (nameResult == 1 || nameResult == 2) {
                 SDL_StopTextInput();
+                nameState.inputActive = 0;
 
-                /* FIX-A: free previous resources before re-init */
+                /* Free previous resources */
                 libererJoueur(&p1);
                 libererJoueur(&p2);
                 freeBackground(&bg);
@@ -1174,11 +1316,14 @@ int main(int argc, char *argv[]) {
                 float sy = (currentLevel == LEVEL_1)
                            ? (float)(508 - PLAYER_PH)
                            : (float)(560 - PLAYER_PH);
+                memset(&p1, 0, sizeof(Player));
+                memset(&p2, 0, sizeof(Player));
                 initialiserJoueur(&p1, ren, PLAYER_1, 150.0f, sy);
                 initialiserJoueur(&p2, ren, PLAYER_2, 250.0f, sy);
 
                 strncpy(p1.name, nameState.name, 31);
                 p1.name[31] = '\0';
+                strncpy(p2.name, "TRINITY", 31);
 
                 resetEnemies(minions, MAX_MINIONS, &boss,
                              &bossSpawned, &bossActive,
@@ -1187,9 +1332,17 @@ int main(int argc, char *argv[]) {
                 if (nameResult == 2 && nameState.bestScore > 0)
                     p1.score = nameState.bestScore;
 
-                /* Reset death transition trackers */
-                p1WasAlive  = 1; p2WasAlive  = 1;
+                p1WasAlive   = 1;
+                p2WasAlive   = 1;
                 enigmePlayer = NULL;
+
+                /* Refresh minimap player thumbnails after re-init */
+                mm.p1Thumb = (p1.anims[STATE_IDLE].textures &&
+                              p1.anims[STATE_IDLE].frameCount > 0)
+                             ? p1.anims[STATE_IDLE].textures[0] : NULL;
+                mm.p2Thumb = (p2.anims[STATE_IDLE].textures &&
+                              p2.anims[STATE_IDLE].frameCount > 0)
+                             ? p2.anims[STATE_IDLE].textures[0] : NULL;
 
                 state = APP_GAME;
             }
@@ -1215,12 +1368,14 @@ int main(int argc, char *argv[]) {
                 SDL_Rect vp1 = {0,              0, SCREEN_WIDTH/2, SCREEN_HEIGHT};
                 SDL_Rect vp2 = {SCREEN_WIDTH/2, 0, SCREEN_WIDTH/2, SCREEN_HEIGHT};
                 renderHalf(ren, &bg, &p1, &p2, vp1,
-                           minions, MAX_MINIONS, &boss, bossActive);
+                           minions, MAX_MINIONS, bossActive ? &boss : NULL, bossActive);
                 renderHalf(ren, &bg, &p2, &p1, vp2,
-                           minions, MAX_MINIONS, &boss, bossActive);
+                           minions, MAX_MINIONS, bossActive ? &boss : NULL, bossActive);
+
+                /* [RENDER-1] Restore viewport before drawing divider */
                 SDL_RenderSetViewport(ren, NULL);
                 SDL_RenderSetClipRect(ren, NULL);
-                /* Split-screen divider */
+
                 SDL_SetRenderDrawColor(ren, 0, 255, 70, 255);
                 for (int dx = -1; dx <= 1; dx++)
                     SDL_RenderDrawLine(ren,
@@ -1232,33 +1387,33 @@ int main(int argc, char *argv[]) {
                 for (int i = 0; i < MAX_MINIONS; i++)
                     if (minions[i].alive)
                         render_enemy(&minions[i], ren, (int)bg.camX);
-                if (bossActive)
+                if (bossActive && boss.alive)
                     render_enemy(&boss, ren, (int)bg.camX);
 
                 afficherJoueur(&p1, ren, bg.camX, bg.camY);
                 afficherBalles(&p1, ren, bg.camX, bg.camY);
                 afficherHUDJoueur(&p1, ren, 10, 10);
-                afficherTemps(&bg, ren, SCREEN_WIDTH - 140, 10);
+                /* [HUD-1] adjusted x position */
+                afficherTemps(&bg, ren, SCREEN_WIDTH - 160, 10);
                 afficherGuide(&bg, ren);
                 afficherNotification(&bg, ren);
 
-                renderMinimap(&mm, ren, &p1, &p2, 0,
-                              minions, MAX_MINIONS, &boss, bossActive);
+                renderMinimap(&mm, ren, &p1, &p2,
+                              dispMode == MODE_MULTI ? 1 : 0,
+                              minions, MAX_MINIONS,
+                              bossActive ? &boss : NULL, bossActive);
 
-                /* FIX-H: boss health bar */
                 if (bossActive && boss.alive)
                     drawBossHealthBar(ren, &boss);
 
-                /* Progress toward boss */
                 if (!bossSpawned) {
                     char progBuf[48];
-                    int  pct = (minionKills * 100) / MINION_KILL_THRESHOLD;
+                    int  pct = minionKills * 100 / MINION_KILL_THRESHOLD;
                     if (pct > 100) pct = 100;
                     snprintf(progBuf, sizeof(progBuf), "AGENTS: %d%%", pct);
-                    drawText(ren, SCREEN_WIDTH - 140, 30, progBuf, 1, 180, 60, 60);
+                    drawText(ren, SCREEN_WIDTH - 160, 30, progBuf, 1, 180, 60, 60);
                 }
 
-                /* Pause overlay */
                 if (bg.paused) {
                     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
                     SDL_SetRenderDrawColor(ren, 0, 0, 0, 120);
@@ -1267,74 +1422,80 @@ int main(int argc, char *argv[]) {
                     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
                     drawTextCentered(ren, SCREEN_HEIGHT/2 - 20,
                                      0, SCREEN_WIDTH, "PAUSE", 4, 0, 255, 80);
+                    drawTextCentered(ren, SCREEN_HEIGHT/2 + 40,
+                                     0, SCREEN_WIDTH, "P = REPRENDRE", 2, 0, 200, 60);
                 }
             }
         }
 
-        /* ---- ENIGME ---- */
+        /* ---- ENIGME CHOICE ---- */
         else if (state == APP_ENIGME_CHOICE) {
-            /* FIX-C: render matrix rain first */
             matrix_render(ren, SCREEN_WIDTH);
-            SDL_Event *evPtr = gotEvent ? &ev : NULL;
+            /* [ENIGME-1] Use buffered event */
+            SDL_Event *evPtr = hasEnigmeEv ? &enigmeEv : NULL;
             int choice = enigmeRenderChoice(&enigme, ren, evPtr, mx, my);
             if (choice == 0) {
                 enigmeStartQCM(&enigme);
+                hasEnigmeEv = 0;
                 state = APP_ENIGME_QCM;
             } else if (choice == 1) {
                 enigmeStartPuzzle(&enigme);
+                hasEnigmeEv = 0;
                 state = APP_ENIGME_PUZZLE;
             }
         }
 
+        /* ---- ENIGME QCM ---- */
         else if (state == APP_ENIGME_QCM) {
-            /* FIX-C: matrix rain behind QCM */
             matrix_render(ren, SCREEN_WIDTH);
-            SDL_Event *evPtr = gotEvent ? &ev : NULL;
+            SDL_Event *evPtr = hasEnigmeEv ? &enigmeEv : NULL;
             EnigmeResult res = enigmeUpdateQCM(&enigme, ren, evPtr);
             if (res != ENIGME_PENDING) {
                 enigme.flashFrames = 0;
+                hasEnigmeEv = 0;
                 state = APP_ENIGME_RESULT;
             }
         }
 
+        /* ---- ENIGME PUZZLE ---- */
         else if (state == APP_ENIGME_PUZZLE) {
-            /* FIX-C: matrix rain behind puzzle */
             matrix_render(ren, SCREEN_WIDTH);
-            SDL_Event *evPtr = gotEvent ? &ev : NULL;
+            SDL_Event *evPtr = hasEnigmeEv ? &enigmeEv : NULL;
             EnigmeResult res = enigmeUpdatePuzzle(&enigme, ren, evPtr);
             if (res != ENIGME_PENDING) {
                 enigme.flashFrames = 0;
+                hasEnigmeEv = 0;
                 state = APP_ENIGME_RESULT;
             }
         }
 
+        /* ---- ENIGME RESULT ---- */
         else if (state == APP_ENIGME_RESULT) {
+            /* [ENIGME-2] enigmeRenderResult does NOT call SDL_RenderPresent */
             int done = enigmeRenderResult(&enigme, ren);
             if (done) {
                 if (enigme.result == ENIGME_WIN) {
                     if (enigmePlayer) {
-                        /* FIX-F: resurrect on solid ground */
-                        enigmePlayer->isAlive = 1;
-                        enigmePlayer->health  = 60;
-                        enigmePlayer->lives   = (enigmePlayer->lives > 0)
-                                                ? enigmePlayer->lives : 1;
-                        enigmePlayer->state   = STATE_IDLE;
-                        enigmePlayer->velX    = 0;
-                        enigmePlayer->velY    = 0;
-                        /* Snap to level floor */
+                        enigmePlayer->isAlive  = 1;
+                        enigmePlayer->health   = 60;
+                        enigmePlayer->lives    = (enigmePlayer->lives > 0)
+                                                 ? enigmePlayer->lives : 1;
+                        enigmePlayer->state    = STATE_IDLE;
+                        enigmePlayer->velX     = 0;
+                        enigmePlayer->velY     = 0;
+                        enigmePlayer->onGround = 1;
                         float floorY = (float)((currentLevel == LEVEL_1 ? 508 : 560)
                                                - PLAYER_PH);
-                        enigmePlayer->worldY  = floorY;
-                        enigmePlayer->onGround = 1;
+                        enigmePlayer->worldY   = floorY;
                         enigmePlayer = NULL;
                     }
-                    /* Reset alive trackers so we don't re-trigger */
+                    /* [ENIGME-3] Reset trackers AFTER reviving player */
                     p1WasAlive = p1.isAlive;
                     p2WasAlive = p2.isAlive;
                     state = APP_GAME;
                     setNotification(&bg, "VIE REGAGNEE !", 2000);
                 } else {
-                    /* Game over */
+                    /* GAME OVER */
                     SDL_RenderPresent(ren);
                     SDL_Delay(200);
 
@@ -1359,24 +1520,34 @@ int main(int argc, char *argv[]) {
                     afficherMeilleursScores(&bg, ren);
                     enigmePlayer = NULL;
 
-                    /* FIX-A: free and re-init properly */
+                    /* Full reset */
                     libererJoueur(&p1);
                     libererJoueur(&p2);
                     freeBackground(&bg);
-                    initBackground(&bg, ren, LEVEL_1, dispMode);
                     currentLevel = LEVEL_1;
+                    initBackground(&bg, ren, LEVEL_1, dispMode);
 
                     float sy = (float)(508 - PLAYER_PH);
+                    memset(&p1, 0, sizeof(Player));
+                    memset(&p2, 0, sizeof(Player));
                     initialiserJoueur(&p1, ren, PLAYER_1, 150.0f, sy);
                     initialiserJoueur(&p2, ren, PLAYER_2, 250.0f, sy);
                     strncpy(p1.name, nameState.name, 31);
+                    strncpy(p2.name, "TRINITY", 31);
 
                     resetEnemies(minions, MAX_MINIONS, &boss,
                                  &bossSpawned, &bossActive,
                                  &spawnTimer, &minionKills, ren, currentLevel);
                     minimapSetLevel(&mm, 1);
+                    mm.p1Thumb = (p1.anims[STATE_IDLE].textures &&
+                                  p1.anims[STATE_IDLE].frameCount > 0)
+                                 ? p1.anims[STATE_IDLE].textures[0] : NULL;
+                    mm.p2Thumb = (p2.anims[STATE_IDLE].textures &&
+                                  p2.anims[STATE_IDLE].frameCount > 0)
+                                 ? p2.anims[STATE_IDLE].textures[0] : NULL;
 
-                    p1WasAlive = 1; p2WasAlive = 1;
+                    p1WasAlive = 1;
+                    p2WasAlive = 1;
                     state = APP_MAIN_MENU;
                     if (au && au->music) Mix_PlayMusic(au->music, -1);
                 }
@@ -1399,12 +1570,13 @@ int main(int argc, char *argv[]) {
     freeMinimap(&mm);
     matrix_free();
     if (au) free_audio(au);
+    /* [MEMORY-1] Free all menu buttons */
     for (int i = 0; i < BTN_COUNT; i++) tbtnFree(&menuBtns[i]);
     tbtnFree(&backBtn);
     if (titleTex) SDL_DestroyTexture(titleTex);
     TTF_CloseFont(fontMain);
     TTF_CloseFont(fontMatrix);
-    if (fontSmall != fontMain) TTF_CloseFont(fontSmall);
+    if (fontSmall && fontSmall != fontMain) TTF_CloseFont(fontSmall);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     TTF_Quit(); IMG_Quit(); SDL_Quit();

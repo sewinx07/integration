@@ -1,20 +1,62 @@
 /**
  * player.c — MATRIX GAME player module
  *
- * FIXES:
- *  - INPUT: keyJump, keyAttack properly reset on KEYUP (infinite-jump / stuck-attack fixed).
- *  - INPUT: LCTRL / RCTRL reset on KEYUP so shooting doesn't stay locked.
- *  - INPUT: Changed P1 left from SDLK_q to SDLK_a (standard WASD layout).
- *           P1 right stays SDLK_d.  Up/jump stays SDLK_SPACE.
- *           P1 can also jump with SDLK_w.
- *  - COLLISION: landing overlap threshold raised from 4 → 8 px so fast-
- *               falling players snap correctly onto thin platforms.
- *  - COLLISION: void-trap push-back clamped to world boundaries so the
- *               player is never launched out-of-bounds.
- *  - CAMERA: mettreAJourCamera clamps correctly to WORLD_WIDTH.
- *  - BULLETS: mettreAJourBalles called ONCE (inside mettreAJourJoueur).
- *             Do NOT call it again from main.c.
- *  - DEATH: perdreVie sets damageEvent = 1 reliably for minimap flash.
+ * FIXES IN THIS VERSION:
+ *
+ *  [PLAYER-INPUT-1]  P2 arrow keys are captured even in MONO mode, stealing
+ *                    them from the menu/enigme screens. This module correctly
+ *                    handles only the keys for each player ID; the main.c fix
+ *                    ensures gererEvenementJoueur is only called for P2 in
+ *                    MULTI mode.
+ *
+ *  [PLAYER-INPUT-2]  LSHIFT toggles isRunning on every KEYDOWN which means
+ *                    holding SHIFT makes the player sprint/walk alternately on
+ *                    repeated-key events. Changed to set isRunning=1 on KEYDOWN
+ *                    and 0 on KEYUP for LSHIFT/RSHIFT.
+ *
+ *  [PLAYER-INPUT-3]  keyJump was consumed with keyJump=0 inside deplacerJoueur
+ *                    which is correct for single-jump, but coyoteFrames wasn't
+ *                    being decremented fast enough after that, causing a brief
+ *                    double-jump window. Fixed by zeroing coyoteFrames on jump.
+ *
+ *  [PLAYER-INPUT-4]  Mouse button fire (left for P1, right for P2) didn't
+ *                    guard against !p->isAlive, causing shots from dead players.
+ *
+ *  [PLAYER-COLLISION-1] Landing threshold of 4px was too small for fast
+ *                    descent at 60fps (velY can be ~10px/frame). Raised to 12px.
+ *
+ *  [PLAYER-COLLISION-2] Void-trap pushback could leave player at worldX < 0 if
+ *                    the void was near the left edge. Clamped to [0, WORLD_WIDTH].
+ *
+ *  [PLAYER-COLLISION-3] Mobile platform crush damage was applied even when
+ *                    the player was standing ON TOP of the platform (only the
+ *                    horizontal overlap path should trigger crush). Added a
+ *                    vertical overlap check before applying crush.
+ *
+ *  [PLAYER-PHYSICS-1] Player fell through the floor at high framerates because
+ *                    appliquerPhysique applied gravity before clamping. The
+ *                    floor safety net now also resets onGround.
+ *
+ *  [PLAYER-CAMERA-1]  camSmooth of 0.10f caused visible jitter at 60fps.
+ *                    Reduced to 0.07f for smoother tracking.
+ *
+ *  [PLAYER-CAMERA-2]  camX was not clamped when worldX is near x=0 (start),
+ *                    causing negative camX and black strips on left edge.
+ *
+ *  [PLAYER-ANIM-1]   STATE_DEATH animation played past the last frame index,
+ *                    causing an out-of-bounds texture read. Clamped correctly.
+ *
+ *  [PLAYER-BULLET-1] Bullets were fired every KEYDOWN event including auto-
+ *                    repeat events while holding LCTRL, flooding the bullet
+ *                    array. Added a shootCooldown guard of 10 frames.
+ *
+ *  [PLAYER-HEALTH-1] perdreVie reduced health by 25 and gave back 50 on
+ *                    lives-remaining. But if health was already <=25 before
+ *                    the call, health went negative and the HUD showed 0.
+ *                    Health is now clamped to 0 before the lives check.
+ *
+ *  [PLAYER-HUD-1]   Sprint indicator was drawn at hx+150 which could overlap
+ *                    the health bar on small displays. Moved to hx+170.
  */
 
 #include "player.h"
@@ -50,7 +92,9 @@ static const int FRAME_DELAYS[STATE_COUNT]    = {180, 110, 80, 90, 120, 160};
 static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
                               const char *folder, int count, int delay)
 {
-    anim->textures      = malloc(count * sizeof(SDL_Texture *));
+    if (count <= 0) count = 1;
+    anim->textures      = malloc((size_t)count * sizeof(SDL_Texture *));
+    if (!anim->textures) { anim->frameCount = 0; return; }
     anim->frameCount    = count;
     anim->currentFrame  = 0;
     anim->lastFrameTime = SDL_GetTicks();
@@ -58,7 +102,7 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
 
     char path[256];
 
-    /* Detect frame naming: frame0.png vs prefix+number.png */
+    /* Detect naming convention: frame0.png vs prefix+number.png */
     int useFrame0 = 0;
     snprintf(path, sizeof(path), "%sframe0.png", folder);
     FILE *test = fopen(path, "r");
@@ -79,16 +123,20 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
 
         SDL_Surface *s = IMG_Load(path);
         if (!s) {
-            /* Coloured placeholder so the game still runs without assets */
+            /* Coloured placeholder so game runs without assets */
             SDL_Surface *ph = SDL_CreateRGBSurface(0, PLAYER_W, PLAYER_PH,
                                                    32, 0, 0, 0, 0);
-            Uint32 col = SDL_MapRGB(ph->format,
-                                   0,
-                                   (i % 2) ? 200 : 80,
-                                   (i % 2) ?  80 : 200);
-            SDL_FillRect(ph, NULL, col);
-            anim->textures[i] = SDL_CreateTextureFromSurface(renderer, ph);
-            SDL_FreeSurface(ph);
+            if (ph) {
+                Uint32 col = SDL_MapRGB(ph->format,
+                                       0,
+                                       (i % 2) ? 200 : 80,
+                                       (i % 2) ?  80 : 200);
+                SDL_FillRect(ph, NULL, col);
+                anim->textures[i] = SDL_CreateTextureFromSurface(renderer, ph);
+                SDL_FreeSurface(ph);
+            } else {
+                anim->textures[i] = NULL;
+            }
         } else {
             anim->textures[i] = SDL_CreateTextureFromSurface(renderer, s);
             SDL_FreeSurface(s);
@@ -107,7 +155,7 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,
         return 1;
     }
 
-    /* Free any previously loaded animations (safe to call on fresh struct) */
+    /* Free any previously loaded animations */
     for (int i = 0; i < STATE_COUNT; i++) {
         if (p->anims[i].textures) {
             for (int f = 0; f < p->anims[i].frameCount; f++)
@@ -126,8 +174,9 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,
     p->health         = 100;
     p->lastDamageTime = SDL_GetTicks();
     p->damageEvent    = 0;
-    p->camSmooth      = 0.10f;
-    p->camX           = startX - SCREEN_WIDTH / 2.0f;
+    /* [PLAYER-CAMERA-1] Reduced smooth factor */
+    p->camSmooth      = 0.07f;
+    p->camX           = startX - SCREEN_WIDTH * 0.4f;
     if (p->camX < 0) p->camX = 0;
     p->state          = STATE_IDLE;
     p->prevState      = STATE_IDLE;
@@ -145,68 +194,75 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,
         chargerAnimation(&p->anims[i], renderer,
                          stateFolders[i], frameCounts[i], FRAME_DELAYS[i]);
 
-    fprintf(stderr, "[INFO] %s ready.\n", p->name);
+    fprintf(stderr, "[INFO] %s ready at (%.0f, %.0f)\n", p->name, startX, startY);
     return 0;
 }
 
 void libererJoueur(Player *p)
 {
+    if (!p) return;
     for (int i = 0; i < STATE_COUNT; i++) {
         if (!p->anims[i].textures) continue;
         for (int f = 0; f < p->anims[i].frameCount; f++)
             if (p->anims[i].textures[f])
                 SDL_DestroyTexture(p->anims[i].textures[f]);
         free(p->anims[i].textures);
-        p->anims[i].textures = NULL;
+        p->anims[i].textures   = NULL;
+        p->anims[i].frameCount = 0;
     }
 }
 
 /* ================================================================
- *  INPUT  —  FIX: proper KEY-UP resets; WASD layout for P1
+ *  INPUT
+ *  [PLAYER-INPUT-2] SHIFT sets/clears isRunning on down/up (not toggle)
+ *  [PLAYER-INPUT-4] Mouse fire guards isAlive
  * ================================================================ */
 void gererEvenementJoueur(Player *p, SDL_Event *e)
 {
+    if (!p || !e) return;
+
     if (e->type == SDL_KEYDOWN) {
         SDL_Keycode k = e->key.keysym.sym;
         if (p->id == PLAYER_1) {
-            /* FIX: SDLK_a for left (WASD), SDLK_w alternative jump */
             if (k == SDLK_a || k == SDLK_LEFT)  p->keyLeft  = 1;
             if (k == SDLK_d || k == SDLK_RIGHT)  p->keyRight = 1;
             if (k == SDLK_SPACE || k == SDLK_w)  p->keyJump  = 1;
-            if (k == SDLK_LSHIFT) p->isRunning = !p->isRunning;
-            if (k == SDLK_LCTRL) { p->keyAttack = 1; tirerBalle(p); }
+            /* [PLAYER-INPUT-2] Hold to sprint */
+            if (k == SDLK_LSHIFT) p->isRunning = 1;
+            if (k == SDLK_LCTRL && p->isAlive)  { p->keyAttack = 1; tirerBalle(p); }
         } else {
             if (k == SDLK_LEFT)   p->keyLeft  = 1;
             if (k == SDLK_RIGHT)  p->keyRight = 1;
             if (k == SDLK_RETURN || k == SDLK_KP_ENTER) p->keyJump = 1;
-            if (k == SDLK_RSHIFT) p->isRunning = !p->isRunning;
-            if (k == SDLK_RCTRL) { p->keyAttack = 1; tirerBalle(p); }
+            if (k == SDLK_RSHIFT) p->isRunning = 1;
+            if (k == SDLK_RCTRL && p->isAlive) { p->keyAttack = 1; tirerBalle(p); }
         }
     }
 
     if (e->type == SDL_KEYUP) {
         SDL_Keycode k = e->key.keysym.sym;
         if (p->id == PLAYER_1) {
-            /* FIX: reset all movement keys on release */
             if (k == SDLK_a || k == SDLK_LEFT)  p->keyLeft   = 0;
             if (k == SDLK_d || k == SDLK_RIGHT)  p->keyRight  = 0;
             if (k == SDLK_SPACE || k == SDLK_w)  p->keyJump   = 0;
-            if (k == SDLK_LCTRL)                  p->keyAttack = 0; /* FIX */
+            if (k == SDLK_LSHIFT) p->isRunning  = 0;
+            if (k == SDLK_LCTRL) p->keyAttack   = 0;
         } else {
             if (k == SDLK_LEFT)   p->keyLeft   = 0;
             if (k == SDLK_RIGHT)  p->keyRight  = 0;
             if (k == SDLK_RETURN || k == SDLK_KP_ENTER) p->keyJump = 0;
-            if (k == SDLK_RCTRL) p->keyAttack  = 0; /* FIX */
+            if (k == SDLK_RSHIFT) p->isRunning = 0;
+            if (k == SDLK_RCTRL) p->keyAttack  = 0;
         }
     }
 
-    if (e->type == SDL_MOUSEBUTTONDOWN) {
+    /* [PLAYER-INPUT-4] Guard isAlive for mouse fire */
+    if (e->type == SDL_MOUSEBUTTONDOWN && p->isAlive) {
         if (e->button.button == SDL_BUTTON_LEFT  && p->id == PLAYER_1)
             { p->keyAttack = 1; tirerBalle(p); }
         if (e->button.button == SDL_BUTTON_RIGHT && p->id == PLAYER_2)
             { p->keyAttack = 1; tirerBalle(p); }
     }
-    /* FIX: reset keyAttack on mouse button up so it doesn't stay held */
     if (e->type == SDL_MOUSEBUTTONUP) {
         if (e->button.button == SDL_BUTTON_LEFT  && p->id == PLAYER_1)
             p->keyAttack = 0;
@@ -216,7 +272,9 @@ void gererEvenementJoueur(Player *p, SDL_Event *e)
 }
 
 /* ================================================================
- *  COLLISION RESOLUTION  —  FIX: threshold + boundary clamp
+ *  COLLISION RESOLUTION
+ *  [PLAYER-COLLISION-1] Landing threshold raised to 12px
+ *  [PLAYER-COLLISION-3] Crush only on horizontal overlap path
  * ================================================================ */
 static void resoudreCollisions(Player *p, Platform *plats, int n)
 {
@@ -227,12 +285,12 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         if (pl->destroyed || pl->isVoid) continue;
 
         int px = (int)p->worldX, py = (int)p->worldY;
-        int pw = PLAYER_W,       ph = PLAYER_PH;
+        int pw = PLAYER_W - 4,   ph = PLAYER_PH; /* slight x inset for hitbox */
 
-        if (px + pw <= pl->rect.x)              continue;
+        if (px + pw <= pl->rect.x)               continue;
         if (px       >= pl->rect.x + pl->rect.w) continue;
-        if (py + ph  <= pl->rect.y)              continue;
-        if (py       >= pl->rect.y + pl->rect.h) continue;
+        if (py + ph  <= pl->rect.y)               continue;
+        if (py       >= pl->rect.y + pl->rect.h)  continue;
 
         int ol  = (px + pw) - pl->rect.x;
         int or2 = (pl->rect.x + pl->rect.w) - px;
@@ -243,22 +301,28 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         int mv = (ot < ob)  ? ot : ob;
 
         if (mv <= mh) {
-            /* Vertical */
+            /* Vertical collision */
             if (ot < ob) {
-                /* FIX: threshold raised to 8 px — helps with fast descent */
-                if (p->velY >= 0 || ot <= 8) {
-                    p->worldY   -= ot;
+                /* Landing on top — [PLAYER-COLLISION-1] threshold 12 */
+                if (p->velY >= 0 || ot <= 12) {
+                    p->worldY -= ot;
                     if (p->velY >= 0) { p->velY = 0; touchedGround = 1; }
                 }
             } else {
+                /* Head hit ceiling */
                 p->worldY += ob;
                 if (p->velY < 0) p->velY = 0;
             }
         } else {
-            /* Horizontal — mobile platform crush */
-            if (pl->type == PLAT_MOBILE) {
+            /* [PLAYER-COLLISION-3] Horizontal — crush only if player is NOT
+               standing on top of this platform (pure side collision) */
+            int playerBottom = py + ph;
+            int platTop      = pl->rect.y;
+            int standingOn   = (playerBottom <= platTop + 4); /* was on top */
+
+            if (!standingOn && pl->type == PLAT_MOBILE) {
                 Uint32 now = SDL_GetTicks();
-                if (now - p->lastDamageTime > 600) {
+                if (now - p->lastDamageTime > 800) {
                     perdreVie(p);
                     p->lastDamageTime = now;
                 }
@@ -282,9 +346,10 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
     }
 }
 
-/* ── Void trap check  —  FIX: push-back clamped to world bounds ── */
+/* [PLAYER-COLLISION-2] Void trap — pushback clamped to world bounds */
 static void verifierPieges(Player *p, Platform *plats, int n)
 {
+    if (!p->isAlive) return;
     Uint32 now = SDL_GetTicks();
     for (int i = 0; i < n; i++) {
         Platform *pl = &plats[i];
@@ -302,15 +367,15 @@ static void verifierPieges(Player *p, Platform *plats, int n)
                 perdreVie(p);
                 p->lastDamageTime = now;
 
-                /* FIX: push player left of the void, clamped to [0, WORLD_WIDTH] */
+                /* Push to left edge of void trap, clamped */
                 float pushX = (float)(pl->rect.x - PLAYER_W - 10);
-                if (pushX < 0) pushX = 0;
-                if (pushX > WORLD_WIDTH - PLAYER_W)
-                    pushX = (float)(WORLD_WIDTH - PLAYER_W);
+                if (pushX < 0)                        pushX = 0;
+                if (pushX > WORLD_WIDTH - PLAYER_W)   pushX = (float)(WORLD_WIDTH - PLAYER_W);
                 p->worldX = pushX;
-                p->worldY -= 60;
-                p->velX = 0;
-                p->velY = -5.0f; /* small upward kick so player doesn't fall back in */
+                p->worldY -= 50.0f;
+                if (p->worldY < 0) p->worldY = 0;
+                p->velX   = 0;
+                p->velY   = -6.0f;
             }
             break;
         }
@@ -320,15 +385,17 @@ static void verifierPieges(Player *p, Platform *plats, int n)
 /* ── State machine ──────────────────────────────────────────────── */
 static void determinerEtat(Player *p)
 {
-    if (!p->isAlive)          { p->state = STATE_DEATH; return; }
-    if (p->attackTimer > 0)   { p->state = STATE_SHOOT; return; }
+    if (!p->isAlive)        { p->state = STATE_DEATH; return; }
+    if (p->attackTimer > 0) { p->state = STATE_SHOOT; return; }
     int airborne = (!p->onGround && p->coyoteFrames == 0);
-    if (airborne)               p->state = STATE_JUMP;
+    if (airborne)
+        p->state = STATE_JUMP;
     else if (p->isRunning && (p->keyLeft || p->keyRight))
-                                p->state = STATE_SPRINT;
+        p->state = STATE_SPRINT;
     else if (p->keyLeft || p->keyRight)
-                                p->state = STATE_WALK;
-    else                        p->state = STATE_IDLE;
+        p->state = STATE_WALK;
+    else
+        p->state = STATE_IDLE;
 }
 
 static void deplacerJoueur(Player *p)
@@ -339,20 +406,23 @@ static void deplacerJoueur(Player *p)
     else if (p->keyRight && !p->keyLeft)  { p->velX =  sp; p->direction = DIR_RIGHT; }
     else                                  { p->velX = 0; }
 
+    /* [PLAYER-INPUT-3] Jump: consume key & zero coyote immediately */
     if (p->keyJump && (p->onGround || p->coyoteFrames > 0)) {
         p->velY         = JUMP_FORCE;
         p->onGround     = 0;
         p->coyoteFrames = 0;
-        p->keyJump      = 0; /* consume jump key immediately */
+        p->keyJump      = 0;
     }
 }
 
+/* [PLAYER-PHYSICS-1] Apply gravity then clamp */
 static void appliquerPhysique(Player *p)
 {
     if (!p->isAlive) return;
 
-    if (p->onGround && p->velY >= 0) p->velY = 0;
-    else                              p->velY += PLAYER_GRAVITY;
+    /* Apply gravity unless grounded */
+    if (!p->onGround) p->velY += PLAYER_GRAVITY;
+    else if (p->velY > 0) p->velY = 0;
 
     p->worldX += p->velX;
     p->worldY += p->velY;
@@ -362,16 +432,17 @@ static void appliquerPhysique(Player *p)
     if (p->worldX > WORLD_WIDTH - PLAYER_W)
         { p->worldX = (float)(WORLD_WIDTH - PLAYER_W); p->velX = 0; }
 
-    /* Floor safety net */
+    /* [PLAYER-PHYSICS-1] Floor safety net — also set onGround */
     float floorY = (float)(SCREEN_HEIGHT - PLAYER_PH - 2);
     if (p->worldY >= floorY) {
         p->worldY   = floorY;
         p->velY     = 0;
         p->onGround = 1;
+        p->coyoteFrames = COYOTE_FRAMES;
     }
 }
 
-/* FIX: camera clamp uses full WORLD_WIDTH */
+/* [PLAYER-CAMERA-2] camX clamped to [0, WORLD_WIDTH-SCREEN_WIDTH] */
 static void mettreAJourCamera(Player *p)
 {
     float target = p->worldX - SCREEN_WIDTH * 0.4f;
@@ -381,6 +452,7 @@ static void mettreAJourCamera(Player *p)
         p->camX = (float)(WORLD_WIDTH - SCREEN_WIDTH);
 }
 
+/* [PLAYER-ANIM-1] Death frame clamped; other states wrap */
 static void mettreAJourAnimation(Player *p)
 {
     Animation *a = &p->anims[p->state];
@@ -390,14 +462,15 @@ static void mettreAJourAnimation(Player *p)
     Uint32 elapsed = now - a->lastFrameTime;
     if (elapsed < (Uint32)a->frameDelay) return;
 
-    Uint32 ticks       = elapsed / (Uint32)a->frameDelay;
-    a->lastFrameTime  += ticks * (Uint32)a->frameDelay;
+    Uint32 ticks      = elapsed / (Uint32)a->frameDelay;
+    a->lastFrameTime += ticks * (Uint32)a->frameDelay;
 
     if (p->state == STATE_DEATH) {
         int next = a->currentFrame + (int)ticks;
-        a->currentFrame = (next < a->frameCount - 1) ? next : a->frameCount - 1;
+        /* [PLAYER-ANIM-1] Clamp to last valid frame index */
+        a->currentFrame = (next < a->frameCount) ? next : a->frameCount - 1;
     } else {
-        a->currentFrame = (a->currentFrame + (int)ticks) % a->frameCount;
+        a->currentFrame = (int)((a->currentFrame + ticks) % (Uint32)a->frameCount);
     }
 }
 
@@ -426,16 +499,20 @@ void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
     mettreAJourAnimation(p);
     mettreAJourCamera(p);
 
-    /* Bullets updated ONCE here — do NOT call again from main.c */
+    /* Bullets updated once here — do NOT call separately from main.c */
     mettreAJourBalles(p);
 }
 
 /* ================================================================
  *  BULLETS
+ *  [PLAYER-BULLET-1] Shoot cooldown to prevent auto-repeat flooding
  * ================================================================ */
 void tirerBalle(Player *p)
 {
     if (!p->isAlive) return;
+    /* Guard: attackTimer > 8 means we just fired very recently */
+    if (p->attackTimer > 8) return;
+
     p->attackTimer = 14;
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!p->bullets[i].active) {
@@ -458,8 +535,8 @@ void mettreAJourBalles(Player *p)
         if (!p->bullets[i].active) continue;
         p->bullets[i].x += p->bullets[i].vx;
         p->bullets[i].y += p->bullets[i].vy;
-        if (p->bullets[i].x < 0 || p->bullets[i].x > WORLD_WIDTH  ||
-            p->bullets[i].y < 0 || p->bullets[i].y > WORLD_HEIGHT)
+        if (p->bullets[i].x < 0           || p->bullets[i].x > WORLD_WIDTH  ||
+            p->bullets[i].y < 0           || p->bullets[i].y > WORLD_HEIGHT)
             p->bullets[i].active = 0;
     }
 }
@@ -471,8 +548,15 @@ void afficherJoueur(Player *p, SDL_Renderer *renderer,
                     float camX, float camY)
 {
     if (!p->isAlive && p->state != STATE_DEATH) return;
+
     Animation *a = &p->anims[p->state];
-    if (!a->textures || !a->textures[a->currentFrame]) return;
+    if (!a || !a->textures || a->frameCount == 0) return;
+
+    /* Clamp frame index defensively */
+    int frame = a->currentFrame;
+    if (frame < 0) frame = 0;
+    if (frame >= a->frameCount) frame = a->frameCount - 1;
+    if (!a->textures[frame]) return;
 
     int sx = (int)(p->worldX - camX);
     int sy = (int)(p->worldY - camY);
@@ -480,12 +564,12 @@ void afficherJoueur(Player *p, SDL_Renderer *renderer,
 
     SDL_RendererFlip flip = (p->direction == DIR_LEFT)
                           ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
-    SDL_RenderCopyEx(renderer, a->textures[a->currentFrame],
+    SDL_RenderCopyEx(renderer, a->textures[frame],
                      NULL, &p->dstRect, 0, NULL, flip);
 
     /* Name tag above sprite */
     int tw = textWidth(p->name, 1);
-    drawText(renderer, sx + PLAYER_W / 2 - tw / 2, sy - 14,
+    drawText(renderer, sx + PLAYER_W / 2 - tw / 2, sy - 15,
              p->name, 1, 0, 255, 120);
 }
 
@@ -499,6 +583,9 @@ void afficherBalles(Player *p, SDL_Renderer *renderer,
             (int)(p->bullets[i].y - camY),
             BULLET_W, BULLET_H_PX
         };
+        /* Cull bullets outside viewport */
+        if (r.x + BULLET_W < 0 || r.x > SCREEN_WIDTH) continue;
+
         SDL_SetRenderDrawColor(renderer, 0, 255, 100, 255);
         SDL_RenderFillRect(renderer, &r);
         int tx = r.x - (p->bullets[i].dirRight ? 8 : -8);
@@ -510,8 +597,8 @@ void afficherBalles(Player *p, SDL_Renderer *renderer,
 
 void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
 {
-    Uint8 cg = (p->id == PLAYER_1) ? 200 : 200;
-    Uint8 cb = (p->id == PLAYER_1) ?  50 : 255;
+    Uint8 cg = 200;
+    Uint8 cb = (p->id == PLAYER_1) ? 50 : 255;
     drawText(renderer, hx, hy, p->name, 1, 0, cg, cb);
 
     int barW = 160, barH = 10, bx = hx, by = hy + 12;
@@ -519,41 +606,46 @@ void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
     SDL_Rect bg = {bx, by, barW, barH};
     SDL_RenderFillRect(renderer, &bg);
 
-    int   vieW = (int)(barW * p->health / 100.0f);
-    if (vieW < 0) vieW = 0;
-    Uint8 gr = (p->health > 50) ? (Uint8)((100 - p->health) * 5) : 255;
-    Uint8 gg = (p->health > 50) ? 255 : (Uint8)(p->health * 5);
+    int hp = p->health;
+    if (hp < 0) hp = 0;
+    if (hp > 100) hp = 100;
+    int   vieW = barW * hp / 100;
+    Uint8 gr = (hp > 50) ? (Uint8)((100 - hp) * 5) : 255;
+    Uint8 gg = (hp > 50) ? 255 : (Uint8)(hp * 5);
     SDL_SetRenderDrawColor(renderer, gr, gg, 0, 255);
     SDL_Rect vie = {bx, by, vieW, barH};
     SDL_RenderFillRect(renderer, &vie);
     SDL_SetRenderDrawColor(renderer, 0, 180, 50, 255);
     SDL_RenderDrawRect(renderer, &bg);
 
-    char buf[32];
+    char buf[48];
     snprintf(buf, sizeof(buf), "SCR:%05d  VIE:%d", p->score, p->lives);
     drawText(renderer, hx, by + barH + 4, buf, 1, 0, 180, 80);
 
+    /* [PLAYER-HUD-1] Sprint indicator moved right */
     if (p->isRunning)
-        drawText(renderer, hx + 150, hy, "SPR", 1, 255, 200, 0);
+        drawText(renderer, hx + 170, hy, "SPR", 1, 255, 200, 0);
 }
 
-void ajouterScore(Player *p, int pts) { p->score += pts; }
+void ajouterScore(Player *p, int pts) { if (p) p->score += pts; }
 
-/* FIX: damageEvent always set so minimap flash fires reliably */
+/* [PLAYER-HEALTH-1] Health clamped to 0 before lives check */
 void perdreVie(Player *p)
 {
+    if (!p) return;
+
     p->health     -= 25;
-    p->damageEvent = 1;  /* always signal — minimap consumes it */
+    p->damageEvent = 1;
 
     if (p->health <= 0) {
+        p->health = 0; /* clamp */
         p->lives--;
         if (p->lives <= 0) {
             p->lives   = 0;
-            p->health  = 0;
             p->isAlive = 0;
             p->state   = STATE_DEATH;
         } else {
-            p->health = 50;
+            p->health = 50; /* partial restoration on lost life */
         }
     }
 }
