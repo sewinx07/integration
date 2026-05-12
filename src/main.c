@@ -90,6 +90,13 @@
  *             stayed at 0. Each player has their own camX (p->camX) used
  *             by renderHalf, which is correct — removed stale MONO-only
  *             updateCamera call that was not conditional on MODE_MONO.
+ *
+ *  [NAMEINPUT-1] APP_NAME_ENTRY text input was frozen because SDL_TEXTINPUT
+ *             and SDL_KEYDOWN events were consumed by the shared event loop
+ *             before reaching nameEntryUpdate(). The event loop now skips
+ *             processing for NAME_ENTRY state (except SDL_QUIT and ESC),
+ *             and nameEntryUpdate() polls its own events directly so that
+ *             every keystroke is guaranteed to reach the name input handler.
  */
 
 #include <SDL2/SDL.h>
@@ -616,40 +623,67 @@ static void nameEntryLookup(NameEntryState *ns, Background *bg)
     }
 }
 
-/* Returns 0=stay, 1=new game, 2=continue */
+/*
+ * [NAMEINPUT-1] nameEntryUpdate now polls its own event queue directly.
+ * The caller must NOT pass events from the shared loop — pass NULL for ev.
+ * This guarantees SDL_TEXTINPUT and SDL_KEYDOWN events are never swallowed
+ * by earlier branches before reaching the name input handler.
+ *
+ * Returns 0=stay, 1=new game, 2=continue
+ */
 static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
                             TTF_Font *font, TTF_Font *fontSmall,
-                            Background *bg, SDL_Event *ev,
-                            int mx, int my)
+                            Background *bg, int mx, int my,
+                            int *outQuit, int *outEsc)
 {
-    /* [INPUT-4] Always ensure text input is active */
+    /* [INPUT-4] Ensure text input is active */
     if (!ns->inputActive) {
         SDL_StopTextInput();
         SDL_Delay(50);
+        while (SDL_PollEvent(NULL)) {} /* flush stale events */
         SDL_StartTextInput();
         ns->inputActive = 1;
     }
 
-    if (ev) {
-        if (ev->type == SDL_TEXTINPUT && ns->nameLen < MAX_NAME_LEN - 1) {
-            for (int c = 0; ev->text.text[c] && ns->nameLen < MAX_NAME_LEN - 1; c++) {
-                char ch = ev->text.text[c];
+    /* [NAMEINPUT-1] Poll events directly — never rely on the outer loop */
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) {
+            if (outQuit) *outQuit = 1;
+            return 0;
+        }
+        if (ev.type == SDL_KEYDOWN &&
+            ev.key.keysym.sym == SDLK_ESCAPE) {
+            if (outEsc) *outEsc = 1;
+            return 0;
+        }
+        if (ev.type == SDL_TEXTINPUT && ns->nameLen < MAX_NAME_LEN - 1) {
+            for (int c = 0; ev.text.text[c] && ns->nameLen < MAX_NAME_LEN - 1; c++) {
+                char ch = ev.text.text[c];
                 if (ch >= 32 && ch < 127)
                     ns->name[ns->nameLen++] = ch;
             }
             ns->name[ns->nameLen] = '\0';
             nameEntryLookup(ns, bg);
         }
-        if (ev->type == SDL_KEYDOWN) {
-            SDL_Keycode k = ev->key.keysym.sym;
+        if (ev.type == SDL_KEYDOWN) {
+            SDL_Keycode k = ev.key.keysym.sym;
             if (k == SDLK_BACKSPACE && ns->nameLen > 0) {
                 ns->name[--ns->nameLen] = '\0';
                 nameEntryLookup(ns, bg);
             }
+            if (k == SDLK_RETURN && ns->nameLen > 0)
+                return 1; /* new game */
+        }
+        if (ev.type == SDL_MOUSEBUTTONDOWN &&
+            ev.button.button == SDL_BUTTON_LEFT) {
+            /* Button hit detection handled in render section below */
+            mx = ev.button.x;
+            my = ev.button.y;
         }
     }
 
-    /* Render */
+    /* ── Render ── */
     SDL_SetRenderDrawColor(ren, 0, 8, 3, 255);
     SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
     SDL_RenderFillRect(ren, &full);
@@ -703,8 +737,8 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         SDL_Surface *bs = TTF_RenderText_Blended(fontSmall, buf, yellow);
         if (bs) {
             SDL_Texture *bt = SDL_CreateTextureFromSurface(ren, bs);
-            SDL_Rect br = {SCREEN_WIDTH/2 - bs->w/2, 275, bs->w, bs->h};
-            SDL_RenderCopy(ren, bt, NULL, &br);
+            SDL_Rect bsr = {SCREEN_WIDTH/2 - bs->w/2, 275, bs->w, bs->h};
+            SDL_RenderCopy(ren, bt, NULL, &bsr);
             SDL_DestroyTexture(bt); SDL_FreeSurface(bs);
         }
     } else if (ns->nameLen > 0) {
@@ -767,14 +801,10 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
             SDL_DestroyTexture(ht); SDL_FreeSurface(h);
         }
 
-        if (ev && ev->type == SDL_MOUSEBUTTONDOWN &&
-            ev->button.button == SDL_BUTTON_LEFT) {
-            if (hovNew)  result = 1;
-            if (hovCont) result = 2;
-        }
-        if (ev && ev->type == SDL_KEYDOWN &&
-            ev->key.keysym.sym == SDLK_RETURN)
-            result = 1;
+        /* Check mouse clicks captured this frame */
+        if (hovNew)  result = 1;
+        if (hovCont) result = 2;
+
     } else {
         SDL_Surface *hint = TTF_RenderText_Blended(fontSmall,
             "Tapez votre nom puis choisissez une option",
@@ -945,151 +975,152 @@ int main(int argc, char *argv[]) {
         SDL_GetMouseState(&mx, &my);
 
         /* ── Events ── */
+        /* [NAMEINPUT-1] NAME_ENTRY polls its own events inside nameEntryUpdate.
+         * The shared event loop below only runs for all OTHER states.
+         * We still need to catch SDL_QUIT here as a safety net. */
         SDL_Event noEv; memset(&noEv, 0, sizeof(noEv));
-        int gotEvent = 0;
         hasEnigmeEv  = 0;
 
-        while (SDL_PollEvent(&ev)) {
-            gotEvent = 1;
-            if (ev.type == SDL_QUIT) { running = 0; break; }
+        if (state != APP_NAME_ENTRY) {
+            while (SDL_PollEvent(&ev)) {
+                if (ev.type == SDL_QUIT) { running = 0; break; }
 
-            /* Global ESC */
-            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) {
-                if (state == APP_GAME) {
-                    SDL_StopTextInput();
-                    state = APP_MAIN_MENU;
-                    if (au && au->music) Mix_PlayMusic(au->music, -1);
+                /* Global ESC */
+                if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) {
+                    if (state == APP_GAME) {
+                        SDL_StopTextInput();
+                        state = APP_MAIN_MENU;
+                        if (au && au->music) Mix_PlayMusic(au->music, -1);
+                    }
+                    else if (state == APP_MODE_SELECT)   state = APP_MAIN_MENU;
+                    else if (state == APP_OPTION)        state = APP_MAIN_MENU;
+                    else if (state == APP_SCORES)        state = APP_MAIN_MENU;
+                    else if (state == APP_HISTOIRE)      state = APP_MAIN_MENU;
+                    else if (state == APP_SAVE_SCREEN)   state = APP_MAIN_MENU;
+                    else if (state == APP_ENIGME_CHOICE ||
+                             state == APP_ENIGME_QCM    ||
+                             state == APP_ENIGME_PUZZLE) {
+                        enigme.result = ENIGME_LOSE;
+                        enigme.flashFrames = 0;
+                        state = APP_ENIGME_RESULT;
+                    }
+                    else running = 0;
+                    break;
                 }
-                else if (state == APP_NAME_ENTRY)  { SDL_StopTextInput(); state = APP_MODE_SELECT; }
-                else if (state == APP_MODE_SELECT)   state = APP_MAIN_MENU;
-                else if (state == APP_OPTION)        state = APP_MAIN_MENU;
-                else if (state == APP_SCORES)        state = APP_MAIN_MENU;
-                else if (state == APP_HISTOIRE)      state = APP_MAIN_MENU;
-                else if (state == APP_SAVE_SCREEN)   state = APP_MAIN_MENU;
+
+                /* MAIN MENU */
+                if (state == APP_MAIN_MENU) {
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT) {
+                        for (int i = 0; i < BTN_COUNT; i++) {
+                            if (!tbtnHit(&menuBtns[i], mx, my)) continue;
+                            switch (i) {
+                                case 0: state = APP_MODE_SELECT; break;
+                                case 1: state = APP_OPTION;      break;
+                                case 2: chargerScores(&bg); state = APP_SCORES; break;
+                                case 3: state = APP_HISTOIRE;    break;
+                                case 4: running = 0;             break;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                /* MODE SELECT */
+                else if (state == APP_MODE_SELECT) {
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT) {
+                        if (bbtnMouseOn(&btnMono,    mx, my)) dispMode = MODE_MONO;
+                        if (bbtnMouseOn(&btnMulti,   mx, my)) dispMode = MODE_MULTI;
+                        if (bbtnMouseOn(&btnRetour,  mx, my)) state = APP_MAIN_MENU;
+                        if (bbtnMouseOn(&btnValider, mx, my)) {
+                            chargerScores(&bg);
+                            nameEntryInit(&nameState, &bg);
+                            state = APP_NAME_ENTRY;
+                        }
+                    }
+                }
+
+                /* OPTION */
+                else if (state == APP_OPTION) {
+                    if (ev.type == SDL_KEYDOWN) {
+                        if (ev.key.keysym.sym == SDLK_LEFT)  musicVol -= 5;
+                        if (ev.key.keysym.sym == SDLK_RIGHT) musicVol += 5;
+                        if (musicVol < 0)   musicVol = 0;
+                        if (musicVol > 100) musicVol = 100;
+                        Mix_VolumeMusic(musicVol * MIX_MAX_VOLUME / 100);
+                    }
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT)
+                        if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
+                }
+
+                /* SCORES */
+                else if (state == APP_SCORES) {
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT)
+                        if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
+                    if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
+                }
+
+                /* HISTOIRE */
+                else if (state == APP_HISTOIRE) {
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT)
+                        if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
+                    if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
+                }
+
+                /* SAVE SCREEN */
+                else if (state == APP_SAVE_SCREEN) {
+                    if (ev.type == SDL_MOUSEBUTTONDOWN &&
+                        ev.button.button == SDL_BUTTON_LEFT)
+                        if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
+                    if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
+                }
+
+                /* GAME */
+                else if (state == APP_GAME) {
+                    /* [INPUT-1] P1 always gets events; P2 only in MULTI mode */
+                    gererEvenementJoueur(&p1, &ev);
+                    if (dispMode == MODE_MULTI) gererEvenementJoueur(&p2, &ev);
+
+                    if (ev.type == SDL_KEYDOWN) {
+                        SDL_Keycode k = ev.key.keysym.sym;
+                        if (k == SDLK_F10) afficherMeilleursScores(&bg, ren);
+                        if (k == SDLK_h)   bg.guide.state = GUIDE_VISIBLE;
+                        if (k == SDLK_p)   togglePause(&bg);
+                        /* [INPUT-2] Level switch only in GAME state, not enigme */
+                        if (k == SDLK_F11) {
+                            currentLevel = LEVEL_1;
+                            freeBackground(&bg);
+                            initBackground(&bg, ren, currentLevel, dispMode);
+                            resetEnemies(minions, MAX_MINIONS, &boss,
+                                         &bossSpawned, &bossActive,
+                                         &spawnTimer, &minionKills, ren, currentLevel);
+                            minimapSetLevel(&mm, 1);
+                        }
+                        if (k == SDLK_F12) {
+                            currentLevel = LEVEL_2;
+                            freeBackground(&bg);
+                            initBackground(&bg, ren, currentLevel, dispMode);
+                            resetEnemies(minions, MAX_MINIONS, &boss,
+                                         &bossSpawned, &bossActive,
+                                         &spawnTimer, &minionKills, ren, currentLevel);
+                            minimapSetLevel(&mm, 2);
+                        }
+                    }
+                }
+
+                /* [ENIGME-1] Buffer enigme event for use in render section */
                 else if (state == APP_ENIGME_CHOICE ||
                          state == APP_ENIGME_QCM    ||
                          state == APP_ENIGME_PUZZLE) {
-                    /* ESC during puzzle = lose; ESC during choice/QCM also = lose */
-                    enigme.result = ENIGME_LOSE;
-                    enigme.flashFrames = 0;
-                    state = APP_ENIGME_RESULT;
+                    enigmeEv  = ev;
+                    hasEnigmeEv = 1;
                 }
-                else running = 0;
-                break;
-            }
-
-            /* MAIN MENU */
-            if (state == APP_MAIN_MENU) {
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT) {
-                    for (int i = 0; i < BTN_COUNT; i++) {
-                        if (!tbtnHit(&menuBtns[i], mx, my)) continue;
-                        switch (i) {
-                            case 0: state = APP_MODE_SELECT; break;
-                            case 1: state = APP_OPTION;      break;
-                            case 2: chargerScores(&bg); state = APP_SCORES; break;
-                            case 3: state = APP_HISTOIRE;    break;
-                            case 4: running = 0;             break;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            /* MODE SELECT */
-            else if (state == APP_MODE_SELECT) {
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT) {
-                    if (bbtnMouseOn(&btnMono,    mx, my)) dispMode = MODE_MONO;
-                    if (bbtnMouseOn(&btnMulti,   mx, my)) dispMode = MODE_MULTI;
-                    if (bbtnMouseOn(&btnRetour,  mx, my)) state = APP_MAIN_MENU;
-                    if (bbtnMouseOn(&btnValider, mx, my)) {
-                        chargerScores(&bg);
-                        nameEntryInit(&nameState, &bg);
-                        state = APP_NAME_ENTRY;
-                    }
-                }
-            }
-
-            /* OPTION */
-            else if (state == APP_OPTION) {
-                if (ev.type == SDL_KEYDOWN) {
-                    if (ev.key.keysym.sym == SDLK_LEFT)  musicVol -= 5;
-                    if (ev.key.keysym.sym == SDLK_RIGHT) musicVol += 5;
-                    if (musicVol < 0)   musicVol = 0;
-                    if (musicVol > 100) musicVol = 100;
-                    Mix_VolumeMusic(musicVol * MIX_MAX_VOLUME / 100);
-                }
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT)
-                    if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
-            }
-
-            /* SCORES */
-            else if (state == APP_SCORES) {
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT)
-                    if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
-                if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
-            }
-
-            /* HISTOIRE */
-            else if (state == APP_HISTOIRE) {
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT)
-                    if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
-                if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
-            }
-
-            /* SAVE SCREEN */
-            else if (state == APP_SAVE_SCREEN) {
-                if (ev.type == SDL_MOUSEBUTTONDOWN &&
-                    ev.button.button == SDL_BUTTON_LEFT)
-                    if (tbtnHit(&backBtn, mx, my)) state = APP_MAIN_MENU;
-                if (ev.type == SDL_KEYDOWN) state = APP_MAIN_MENU;
-            }
-
-            /* GAME */
-            else if (state == APP_GAME) {
-                /* [INPUT-1] P1 always gets events; P2 only in MULTI mode */
-                gererEvenementJoueur(&p1, &ev);
-                if (dispMode == MODE_MULTI) gererEvenementJoueur(&p2, &ev);
-
-                if (ev.type == SDL_KEYDOWN) {
-                    SDL_Keycode k = ev.key.keysym.sym;
-                    if (k == SDLK_F10) afficherMeilleursScores(&bg, ren);
-                    if (k == SDLK_h)   bg.guide.state = GUIDE_VISIBLE;
-                    if (k == SDLK_p)   togglePause(&bg);
-                    /* [INPUT-2] Level switch only in GAME state, not enigme */
-                    if (k == SDLK_F11) {
-                        currentLevel = LEVEL_1;
-                        freeBackground(&bg);
-                        initBackground(&bg, ren, currentLevel, dispMode);
-                        resetEnemies(minions, MAX_MINIONS, &boss,
-                                     &bossSpawned, &bossActive,
-                                     &spawnTimer, &minionKills, ren, currentLevel);
-                        minimapSetLevel(&mm, 1);
-                    }
-                    if (k == SDLK_F12) {
-                        currentLevel = LEVEL_2;
-                        freeBackground(&bg);
-                        initBackground(&bg, ren, currentLevel, dispMode);
-                        resetEnemies(minions, MAX_MINIONS, &boss,
-                                     &bossSpawned, &bossActive,
-                                     &spawnTimer, &minionKills, ren, currentLevel);
-                        minimapSetLevel(&mm, 2);
-                    }
-                }
-            }
-
-            /* [ENIGME-1] Buffer enigme event for use in render section */
-            else if (state == APP_ENIGME_CHOICE ||
-                     state == APP_ENIGME_QCM    ||
-                     state == APP_ENIGME_PUZZLE) {
-                enigmeEv  = ev;
-                hasEnigmeEv = 1;
-            }
-        } /* end event poll */
+            } /* end event poll */
+        } /* end if (state != APP_NAME_ENTRY) */
 
         /* ── UPDATE ── */
         if (state == APP_MAIN_MENU) {
@@ -1125,10 +1156,16 @@ int main(int argc, char *argv[]) {
             if (dispMode == MODE_MULTI)
                 mettreAJourJoueur(&p2, bg.platforms, bg.platformCount);
 
-            /* [CAMERA-1] MONO: track p1; MULTI: each player has its own camX */
+            /* [CAMERA-1] MONO: bg.camX is driven by p1.camX which is already
+             * smoothed inside mettreAJourJoueur->mettreAJourCamera. A second
+             * independent updateCamera() produced a slightly different smooth
+             * value causing per-frame vibration. Mirror p1.camX into bg.camX
+             * so background and sprite always use the exact same offset. */
             if (dispMode == MODE_MONO) {
-                updateCamera(&bg, p1.worldX, p1.worldY);
+                bg.camX = p1.camX;
+                bg.camY = 0;
                 clampBgCam(&bg);
+                p1.camX = bg.camX;
             }
 
             updateBackground(&bg);
@@ -1289,6 +1326,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* ---- NAME ENTRY ---- */
+        /* [NAMEINPUT-1] nameEntryUpdate polls its own events; no ev passed */
         else if (state == APP_NAME_ENTRY) {
             matrix_render(ren, SCREEN_WIDTH);
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -1297,11 +1335,18 @@ int main(int argc, char *argv[]) {
             SDL_RenderFillRect(ren, &full);
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 
-            SDL_Event *evPtr = gotEvent ? &ev : NULL;
+            int wantsQuit = 0, wantsEsc = 0;
             int nameResult = nameEntryUpdate(&nameState, ren,
                                               fontMain, fontSmall,
-                                              &bg, evPtr, mx, my);
-            if (nameResult == 1 || nameResult == 2) {
+                                              &bg, mx, my,
+                                              &wantsQuit, &wantsEsc);
+            if (wantsQuit) { running = 0; }
+            else if (wantsEsc) {
+                SDL_StopTextInput();
+                nameState.inputActive = 0;
+                state = APP_MODE_SELECT;
+            }
+            else if (nameResult == 1 || nameResult == 2) {
                 SDL_StopTextInput();
                 nameState.inputActive = 0;
 
