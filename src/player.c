@@ -373,6 +373,7 @@ static void appliquerPhysique(Player *p)
     }
 }
 
+// AFTER:
 static void mettreAJourCamera(Player *p)
 {
     float target = p->worldX - SCREEN_WIDTH * 0.4f;
@@ -380,6 +381,8 @@ static void mettreAJourCamera(Player *p)
     if (p->camX < 0) p->camX = 0;
     if (p->camX > (float)(WORLD_WIDTH - SCREEN_WIDTH))
         p->camX = (float)(WORLD_WIDTH - SCREEN_WIDTH);
+    /* Snap to integer pixels to prevent subpixel jitter */
+    p->camX = (float)(int)p->camX;
 }
 
 static void mettreAJourAnimation(Player *p)

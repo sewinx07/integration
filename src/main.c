@@ -97,6 +97,13 @@
  *             processing for NAME_ENTRY state (except SDL_QUIT and ESC),
  *             and nameEntryUpdate() polls its own events directly so that
  *             every keystroke is guaranteed to reach the name input handler.
+ *
+ *  [LED-2]    Arduino LED feedback: print "HIT\n" or "DEAD\n" to stdout
+ *             when p1/p2 damageEvent is set. Must happen BEFORE
+ *             renderMinimap() because minimap.c resets damageEvent = 0
+ *             inside renderMinimap when it draws the red flash overlay.
+ *             The Python bridge watches stdout and sends 'B' or 'D' to
+ *             the Arduino which blinks the LED accordingly.
  */
 
 #include <SDL2/SDL.h>
@@ -225,14 +232,6 @@ static void bbtnDraw(SDL_Renderer *ren, BBtn *b) {
 /* ============================================================
  * GAME HELPERS
  * ============================================================ */
-static void clampBgCam(Background *bg) {
-    if (bg->camX < 0) bg->camX = 0;
-    if (bg->camY < 0) bg->camY = 0;
-    if (bg->camX > WORLD_WIDTH  - SCREEN_WIDTH)
-        bg->camX = (float)(WORLD_WIDTH  - SCREEN_WIDTH);
-    if (bg->camY > WORLD_HEIGHT - SCREEN_HEIGHT)
-        bg->camY = (float)(WORLD_HEIGHT - SCREEN_HEIGHT);
-}
 
 /* [BOSS-1] Only called at spawn, not every frame */
 static void setEnemyY(Enemy *e, GameLevel level) {
@@ -625,10 +624,6 @@ static void nameEntryLookup(NameEntryState *ns, Background *bg)
 
 /*
  * [NAMEINPUT-1] nameEntryUpdate now polls its own event queue directly.
- * The caller must NOT pass events from the shared loop — pass NULL for ev.
- * This guarantees SDL_TEXTINPUT and SDL_KEYDOWN events are never swallowed
- * by earlier branches before reaching the name input handler.
- *
  * Returns 0=stay, 1=new game, 2=continue
  */
 static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
@@ -645,7 +640,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         ns->inputActive = 1;
     }
 
-    /* [NAMEINPUT-1] Poll events directly — never rely on the outer loop */
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) {
@@ -677,7 +671,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         }
         if (ev.type == SDL_MOUSEBUTTONDOWN &&
             ev.button.button == SDL_BUTTON_LEFT) {
-            /* Button hit detection handled in render section below */
             mx = ev.button.x;
             my = ev.button.y;
         }
@@ -801,7 +794,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
             SDL_DestroyTexture(ht); SDL_FreeSurface(h);
         }
 
-        /* Check mouse clicks captured this frame */
         if (hovNew)  result = 1;
         if (hovCont) result = 2;
 
@@ -826,14 +818,11 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
  * ============================================================ */
 static int pickSpawnX(Player *p1, Player *p2, DisplayMode mode, int enemyW)
 {
-    /* Pick a random side (left or right) off the player's viewport */
     int ref = (int)p1->worldX;
     if (mode == MODE_MULTI && p2) {
-        /* Use mid-point between both players for multi */
         ref = ((int)p1->worldX + (int)p2->worldX) / 2;
     }
 
-    /* Alternate sides each call using a static toggle */
     static int side = 0;
     side ^= 1;
 
@@ -844,7 +833,6 @@ static int pickSpawnX(Player *p1, Player *p2, DisplayMode mode, int enemyW)
         spawnX = ref - SCREEN_WIDTH / 2 - 100 - enemyW;
     }
 
-    /* Clamp to world */
     if (spawnX < 0) spawnX = 0;
     if (spawnX > WORLD_WIDTH - enemyW) spawnX = WORLD_WIDTH - enemyW;
     return spawnX;
@@ -974,10 +962,6 @@ int main(int argc, char *argv[]) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
 
-        /* ── Events ── */
-        /* [NAMEINPUT-1] NAME_ENTRY polls its own events inside nameEntryUpdate.
-         * The shared event loop below only runs for all OTHER states.
-         * We still need to catch SDL_QUIT here as a safety net. */
         SDL_Event noEv; memset(&noEv, 0, sizeof(noEv));
         hasEnigmeEv  = 0;
 
@@ -1156,16 +1140,9 @@ int main(int argc, char *argv[]) {
             if (dispMode == MODE_MULTI)
                 mettreAJourJoueur(&p2, bg.platforms, bg.platformCount);
 
-            /* [CAMERA-1] MONO: bg.camX is driven by p1.camX which is already
-             * smoothed inside mettreAJourJoueur->mettreAJourCamera. A second
-             * independent updateCamera() produced a slightly different smooth
-             * value causing per-frame vibration. Mirror p1.camX into bg.camX
-             * so background and sprite always use the exact same offset. */
             if (dispMode == MODE_MONO) {
                 bg.camX = p1.camX;
                 bg.camY = 0;
-                clampBgCam(&bg);
-                p1.camX = bg.camX;
             }
 
             updateBackground(&bg);
@@ -1183,7 +1160,7 @@ int main(int argc, char *argv[]) {
                             memset(&minions[i], 0, sizeof(Enemy));
                             init_enemy(&minions[i], 0, ren, spawnX);
                             setEnemyY(&minions[i], currentLevel);
-                            spawnTimer = 150; /* ~2.5s between spawns */
+                            spawnTimer = 150;
                             break;
                         }
                     }
@@ -1194,7 +1171,7 @@ int main(int argc, char *argv[]) {
             for (int i = 0; i < MAX_MINIONS; i++) {
                 if (!minions[i].alive) continue;
 
-                int wasAlive = minions[i].alive; /* always 1 here */
+                int wasAlive = minions[i].alive;
                 int ref_x    = (int)p1.worldX;
                 if (dispMode == MODE_MULTI) {
                     int d1 = abs((int)p1.worldX - minions[i].x);
@@ -1203,7 +1180,6 @@ int main(int argc, char *argv[]) {
                 }
                 update_enemy(&minions[i], ref_x);
 
-                /* Count kill only on alive→dead transition */
                 if (wasAlive && !minions[i].alive) {
                     minionKills++;
                     fprintf(stderr, "[KILL] Minion %d killed. Total: %d/%d\n",
@@ -1227,7 +1203,7 @@ int main(int argc, char *argv[]) {
                     destroy_enemy(&boss);
                     memset(&boss, 0, sizeof(Enemy));
                     init_enemy(&boss, 1, ren, spawnX);
-                    setEnemyY(&boss, currentLevel); /* [BOSS-1] only here */
+                    setEnemyY(&boss, currentLevel);
                     bossSpawned = 1;
                     bossActive  = 1;
                     setNotification(&bg, "BOSS FINAL !", 3000);
@@ -1235,7 +1211,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            /* Update boss — [BOSS-1] NO setEnemyY every frame */
+            /* Update boss */
             if (bossActive && boss.alive) {
                 int ref_x = (int)p1.worldX;
                 if (dispMode == MODE_MULTI) {
@@ -1249,7 +1225,6 @@ int main(int argc, char *argv[]) {
                     bossActive = 0;
                     setNotification(&bg, "BOSS VAINCU ! VICTOIRE !", 4000);
                     p1.score += 500;
-                    /* [BOSS-2] Award score to P2 as well */
                     if (dispMode == MODE_MULTI) p2.score += 500;
                 }
 
@@ -1265,6 +1240,24 @@ int main(int argc, char *argv[]) {
                 checkBulletsVsEnemies(&p2, minions, MAX_MINIONS,
                                       bossActive ? &boss : NULL, bossActive);
 
+            /* ── [LED-2] Arduino LED feedback ────────────────────────────
+             * Check damageEvent HERE, before renderMinimap() clears it.
+             * minimap.c resets p->damageEvent = 0 inside renderMinimap()
+             * when it draws the red screen flash. If this block ran after
+             * rendering, damageEvent would always be 0 and the LED would
+             * never blink. The Python bridge reads these lines from stdout
+             * and sends 'B' (hit) or 'D' (death) to the Arduino.
+             * Do NOT reset damageEvent here — renderMinimap() owns that. */
+            if (p1.damageEvent) {
+                printf(p1.isAlive ? "HIT\n" : "DEAD\n");
+                fflush(stdout);
+            }
+            if (dispMode == MODE_MULTI && p2.damageEvent) {
+                printf(p2.isAlive ? "HIT\n" : "DEAD\n");
+                fflush(stdout);
+            }
+            /* ── end LED feedback ──────────────────────────────────────── */
+
             /* Death detection — [ENIGME-3] transition guard */
             int p1Alive = p1.isAlive;
             int p2Alive = p2.isAlive;
@@ -1276,7 +1269,7 @@ int main(int argc, char *argv[]) {
                 enigme.selectedTile = -1;
                 hasEnigmeEv         = 0;
                 SDL_Delay(200);
-                while (SDL_PollEvent(&ev)) {} /* flush queued events */
+                while (SDL_PollEvent(&ev)) {}
                 state = APP_ENIGME_CHOICE;
             } else if (dispMode == MODE_MULTI &&
                        p2WasAlive && !p2Alive &&
@@ -1326,7 +1319,6 @@ int main(int argc, char *argv[]) {
         }
 
         /* ---- NAME ENTRY ---- */
-        /* [NAMEINPUT-1] nameEntryUpdate polls its own events; no ev passed */
         else if (state == APP_NAME_ENTRY) {
             matrix_render(ren, SCREEN_WIDTH);
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -1350,7 +1342,6 @@ int main(int argc, char *argv[]) {
                 SDL_StopTextInput();
                 nameState.inputActive = 0;
 
-                /* Free previous resources */
                 libererJoueur(&p1);
                 libererJoueur(&p2);
                 freeBackground(&bg);
@@ -1381,7 +1372,6 @@ int main(int argc, char *argv[]) {
                 p2WasAlive   = 1;
                 enigmePlayer = NULL;
 
-                /* Refresh minimap player thumbnails after re-init */
                 mm.p1Thumb = (p1.anims[STATE_IDLE].textures &&
                               p1.anims[STATE_IDLE].frameCount > 0)
                              ? p1.anims[STATE_IDLE].textures[0] : NULL;
@@ -1438,7 +1428,6 @@ int main(int argc, char *argv[]) {
                 afficherJoueur(&p1, ren, bg.camX, bg.camY);
                 afficherBalles(&p1, ren, bg.camX, bg.camY);
                 afficherHUDJoueur(&p1, ren, 10, 10);
-                /* [HUD-1] adjusted x position */
                 afficherTemps(&bg, ren, SCREEN_WIDTH - 160, 10);
                 afficherGuide(&bg, ren);
                 afficherNotification(&bg, ren);
@@ -1476,7 +1465,6 @@ int main(int argc, char *argv[]) {
         /* ---- ENIGME CHOICE ---- */
         else if (state == APP_ENIGME_CHOICE) {
             matrix_render(ren, SCREEN_WIDTH);
-            /* [ENIGME-1] Use buffered event */
             SDL_Event *evPtr = hasEnigmeEv ? &enigmeEv : NULL;
             int choice = enigmeRenderChoice(&enigme, ren, evPtr, mx, my);
             if (choice == 0) {
@@ -1516,7 +1504,6 @@ int main(int argc, char *argv[]) {
 
         /* ---- ENIGME RESULT ---- */
         else if (state == APP_ENIGME_RESULT) {
-            /* [ENIGME-2] enigmeRenderResult does NOT call SDL_RenderPresent */
             int done = enigmeRenderResult(&enigme, ren);
             if (done) {
                 if (enigme.result == ENIGME_WIN) {
