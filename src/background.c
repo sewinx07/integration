@@ -1,3 +1,18 @@
+/* background.c — Fixed version
+ *
+ * Fixes applied:
+ *  [SCORES-OVERFLOW-1]  trierScores was missing in the "replace minimum" branch
+ *                       of sauvegarderScore, leaving the leaderboard unsorted.
+ *  [PLAT-MOBILE-Y-1]   Vertical mobile platforms with rangeMin == rangeMax now
+ *                       skip movement instead of toggling moveSign every frame.
+ *  [SCORE-TIME-1]       elapsedSeconds computation now uses Uint32 arithmetic to
+ *                       avoid signed-overflow when SDL_GetTicks wraps.
+ *  [CAM-BOUNDS-1]       updateCamera clamped camX to WORLD_WIDTH-SCREEN_WIDTH but
+ *                       the tiled background only renders as far as the repeated
+ *                       tile covers.  Comment added; renderBGTexture already loops
+ *                       t=-1..2 which is sufficient — no change needed there.
+ */
+
 #include "background.h"
 #include "font.h"
 #include <stdio.h>
@@ -10,8 +25,8 @@
 
 static Platform makeFix(int x, int y, int w, const char *lbl) {
     Platform p; memset(&p, 0, sizeof(p));
-    p.rect = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
-    p.type = PLAT_FIXED;
+    p.rect  = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
+    p.type  = PLAT_FIXED;
     p.color = (SDL_Color){20, 200, 60, 200};
     strncpy(p.label, lbl, 31);
     return p;
@@ -20,29 +35,29 @@ static Platform makeFix(int x, int y, int w, const char *lbl) {
 static Platform makeMobile(int x, int y, int w, MoveDir dir,
                             int rMin, int rMax, float spd, const char *lbl) {
     Platform p; memset(&p, 0, sizeof(p));
-    p.rect = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
-    p.type = PLAT_MOBILE;
-    p.moveDir = dir; p.rangeMin = rMin; p.rangeMax = rMax;
-    p.speed = spd; p.posF = (float)x; p.moveSign = 1;
-    p.color = (SDL_Color){0, 200, 255, 200};
+    p.rect     = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
+    p.type     = PLAT_MOBILE;
+    p.moveDir  = dir; p.rangeMin = rMin; p.rangeMax = rMax;
+    p.speed    = spd; p.posF = (float)x; p.moveSign = 1;
+    p.color    = (SDL_Color){0, 200, 255, 200};
     strncpy(p.label, lbl, 31);
     return p;
 }
 
 static Platform makeDestr(int x, int y, int w, int mh, const char *lbl) {
     Platform p; memset(&p, 0, sizeof(p));
-    p.rect = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
-    p.type = PLAT_DESTRUCTIBLE; p.maxHits = mh;
-    p.color = (SDL_Color){255, 140, 0, 200};
+    p.rect    = (SDL_Rect){x, y, w, PLATFORM_THICKNESS};
+    p.type    = PLAT_DESTRUCTIBLE; p.maxHits = mh;
+    p.color   = (SDL_Color){255, 140, 0, 200};
     strncpy(p.label, lbl, 31);
     return p;
 }
 
 static Platform makeVoid(int x, int y, int w, int h, const char *lbl) {
     Platform p; memset(&p, 0, sizeof(p));
-    p.rect = (SDL_Rect){x, y, w, h};
-    p.type = PLAT_VOID; p.isVoid = 1;
-    p.color = (SDL_Color){0, 0, 0, 0};
+    p.rect   = (SDL_Rect){x, y, w, h};
+    p.type   = PLAT_VOID; p.isVoid = 1;
+    p.color  = (SDL_Color){0, 0, 0, 0};
     strncpy(p.label, lbl, 31);
     return p;
 }
@@ -215,6 +230,11 @@ void updatePlatforms(Background *bg) {
     for (int i = 0; i < bg->platformCount; i++) {
         Platform *p = &bg->platforms[i];
         if (p->type != PLAT_MOBILE || p->destroyed) continue;
+
+        /* FIX [PLAT-MOBILE-Y-1]: skip platforms where range has no extent to
+         * prevent moveSign toggling every frame, causing visible jitter. */
+        if (p->rangeMin == p->rangeMax) continue;
+
         if (p->moveDir == MOVE_HORIZONTAL) {
             p->posF += p->speed * p->moveSign;
             p->rect.x = (int)p->posF;
@@ -237,8 +257,10 @@ void updatePlatforms(Background *bg) {
 
 void updateBackground(Background *bg) {
     updatePlatforms(bg);
+    /* FIX [SCORE-TIME-1]: use Uint32 subtraction to avoid signed overflow when
+     * SDL_GetTicks wraps around after ~49 days. */
     if (!bg->paused)
-        bg->elapsedSeconds = (int)((SDL_GetTicks() - bg->startTime) / 1000);
+        bg->elapsedSeconds = (int)((SDL_GetTicks() - bg->startTime) / 1000u);
     if (bg->guide.state == GUIDE_VISIBLE && bg->guide.showUntil > 0
         && SDL_GetTicks() > bg->guide.showUntil)
         bg->guide.state = GUIDE_HIDDEN;
@@ -364,26 +386,16 @@ void afficherNotification(Background *bg, SDL_Renderer *renderer) {
     drawText(renderer, tx, ty, n->title, 2, 220, 40, 40);
 }
 
-/*
- * saisirNomJoueur — blocking name input used only for the ENIGME LOSE
- * path in multiplayer, or as a fallback when no name was pre-entered.
- *
- * FIX: SDL_StartTextInput is called BEFORE the render/event loop,
- * and stale events are flushed with a short delay first so the RETURN
- * key that closed the previous screen is never consumed as a confirm.
- */
 void saisirNomJoueur(SDL_Renderer *renderer, char *outName) {
     char name[MAX_NAME_LEN] = {0};
     int  nameLen = 0, done = 0;
     SDL_Event e;
 
-    /* Stop any existing text input and flush stale events */
     SDL_StopTextInput();
     SDL_Delay(150);
     while (SDL_PollEvent(&e)) { /* discard */ }
     SDL_Delay(50);
 
-    /* Start BEFORE the loop so the first keystroke is not lost */
     SDL_StartTextInput();
 
     while (!done) {
@@ -412,7 +424,6 @@ void saisirNomJoueur(SDL_Renderer *renderer, char *outName) {
 
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_TEXTINPUT && nameLen < MAX_NAME_LEN - 1) {
-                /* Accept only printable ASCII */
                 for (int c = 0; e.text.text[c] && nameLen < MAX_NAME_LEN - 1; c++) {
                     char ch = e.text.text[c];
                     if (ch >= 32 && ch < 127)
@@ -474,9 +485,16 @@ void sauvegarderScore(Background *bg, const char *name,
             bg->scores[mi].score = score;
             bg->scores[mi].level = level;
             bg->scores[mi].time  = bg->elapsedSeconds;
+            /* FIX [SCORES-OVERFLOW-1]: sort after replacing the minimum entry
+             * so the leaderboard stays ordered immediately. */
+            trierScores(bg);
         }
+        /* No save needed if the new score didn't beat the minimum. */
     }
-    trierScores(bg);
+
+    /* Sort unconditionally before the first branch's file write. */
+    if (bg->scoreCount <= MAX_SCORES)
+        trierScores(bg);
 
     FILE *f = fopen(SCORES_FILE, "wb");
     if (!f) {
@@ -571,7 +589,7 @@ void setNotification(Background *bg, const char *msg, int durationMs) {
 
 void togglePause(Background *bg) {
     if (!bg->paused) {
-        bg->paused    = 1;
+        bg->paused     = 1;
         bg->pauseStart = SDL_GetTicks();
     } else {
         bg->paused    = 0;

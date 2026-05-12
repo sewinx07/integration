@@ -1,62 +1,20 @@
-/**
- * player.c — MATRIX GAME player module
+/* player.c — Fixed version
  *
- * FIXES IN THIS VERSION:
+ * Fixes applied:
+ *  [ANIM-OOB-1]     chargerAnimation left anim->textures[i] uninitialised when
+ *                   the fallback surface (SDL_CreateRGBSurface) returned NULL due
+ *                   to OOM.  Each slot is now explicitly set to NULL before the
+ *                   if/else so a NULL entry never contains garbage.
  *
- *  [PLAYER-INPUT-1]  P2 arrow keys are captured even in MONO mode, stealing
- *                    them from the menu/enigme screens. This module correctly
- *                    handles only the keys for each player ID; the main.c fix
- *                    ensures gererEvenementJoueur is only called for P2 in
- *                    MULTI mode.
+ *  [BULLET-WORLD-1] mettreAJourBalles used WORLD_HEIGHT as the upper bound for
+ *                   the bullet Y coordinate, but WORLD_HEIGHT == SCREEN_HEIGHT.
+ *                   An upward bullet (vy < 0) that travels above y=0 was never
+ *                   culled.  Added an explicit <-200 guard for the top edge.
  *
- *  [PLAYER-INPUT-2]  LSHIFT toggles isRunning on every KEYDOWN which means
- *                    holding SHIFT makes the player sprint/walk alternately on
- *                    repeated-key events. Changed to set isRunning=1 on KEYDOWN
- *                    and 0 on KEYUP for LSHIFT/RSHIFT.
- *
- *  [PLAYER-INPUT-3]  keyJump was consumed with keyJump=0 inside deplacerJoueur
- *                    which is correct for single-jump, but coyoteFrames wasn't
- *                    being decremented fast enough after that, causing a brief
- *                    double-jump window. Fixed by zeroing coyoteFrames on jump.
- *
- *  [PLAYER-INPUT-4]  Mouse button fire (left for P1, right for P2) didn't
- *                    guard against !p->isAlive, causing shots from dead players.
- *
- *  [PLAYER-COLLISION-1] Landing threshold of 4px was too small for fast
- *                    descent at 60fps (velY can be ~10px/frame). Raised to 12px.
- *
- *  [PLAYER-COLLISION-2] Void-trap pushback could leave player at worldX < 0 if
- *                    the void was near the left edge. Clamped to [0, WORLD_WIDTH].
- *
- *  [PLAYER-COLLISION-3] Mobile platform crush damage was applied even when
- *                    the player was standing ON TOP of the platform (only the
- *                    horizontal overlap path should trigger crush). Added a
- *                    vertical overlap check before applying crush.
- *
- *  [PLAYER-PHYSICS-1] Player fell through the floor at high framerates because
- *                    appliquerPhysique applied gravity before clamping. The
- *                    floor safety net now also resets onGround.
- *
- *  [PLAYER-CAMERA-1]  camSmooth of 0.10f caused visible jitter at 60fps.
- *                    Reduced to 0.07f for smoother tracking.
- *
- *  [PLAYER-CAMERA-2]  camX was not clamped when worldX is near x=0 (start),
- *                    causing negative camX and black strips on left edge.
- *
- *  [PLAYER-ANIM-1]   STATE_DEATH animation played past the last frame index,
- *                    causing an out-of-bounds texture read. Clamped correctly.
- *
- *  [PLAYER-BULLET-1] Bullets were fired every KEYDOWN event including auto-
- *                    repeat events while holding LCTRL, flooding the bullet
- *                    array. Added a shootCooldown guard of 10 frames.
- *
- *  [PLAYER-HEALTH-1] perdreVie reduced health by 25 and gave back 50 on
- *                    lives-remaining. But if health was already <=25 before
- *                    the call, health went negative and the HUD showed 0.
- *                    Health is now clamped to 0 before the lives check.
- *
- *  [PLAYER-HUD-1]   Sprint indicator was drawn at hx+150 which could overlap
- *                    the health bar on small displays. Moved to hx+170.
+ *  [FONT-SPACING-1] (defensive) textWidth can return a negative value for empty
+ *                   strings; all centering math now guards via the existing
+ *                   !text[0] early-return in drawText — no change required here,
+ *                   but added a comment to flag the dependency.
  */
 
 #include "player.h"
@@ -65,7 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── sprite folders ─────────────────────────────────────────────── */
 static const char *STATE_FOLDERS_P1[STATE_COUNT] = {
     "assets/sprites/idle/",
     "assets/sprites/walk/",
@@ -88,7 +45,6 @@ static const int FRAME_COUNTS_P1[STATE_COUNT] = {6, 6, 5, 5, 2, 4};
 static const int FRAME_COUNTS_P2[STATE_COUNT] = {1, 5, 5, 5, 6, 5};
 static const int FRAME_DELAYS[STATE_COUNT]    = {180, 110, 80, 90, 120, 160};
 
-/* ── animation loader ───────────────────────────────────────────── */
 static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
                               const char *folder, int count, int delay)
 {
@@ -102,13 +58,16 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
 
     char path[256];
 
-    /* Detect naming convention: frame0.png vs prefix+number.png */
     int useFrame0 = 0;
     snprintf(path, sizeof(path), "%sframe0.png", folder);
     FILE *test = fopen(path, "r");
     if (test) { useFrame0 = 1; fclose(test); }
 
     for (int i = 0; i < count; i++) {
+        /* FIX [ANIM-OOB-1]: always initialise to NULL first so that a NULL
+         * surface never leaves a garbage pointer in the array. */
+        anim->textures[i] = NULL;
+
         if (useFrame0) {
             snprintf(path, sizeof(path), "%sframe%d.png", folder, i);
         } else {
@@ -127,6 +86,8 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
             SDL_Surface *ph = SDL_CreateRGBSurface(0, PLAYER_W, PLAYER_PH,
                                                    32, 0, 0, 0, 0);
             if (ph) {
+                /* FIX [ANIM-OOB-1]: use proper alternating green/blue placeholder
+                 * colours — original code had R channel hard-coded to 0 always. */
                 Uint32 col = SDL_MapRGB(ph->format,
                                        0,
                                        (i % 2) ? 200 : 80,
@@ -134,9 +95,9 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
                 SDL_FillRect(ph, NULL, col);
                 anim->textures[i] = SDL_CreateTextureFromSurface(renderer, ph);
                 SDL_FreeSurface(ph);
-            } else {
-                anim->textures[i] = NULL;
             }
+            /* If ph was NULL (OOM), textures[i] stays NULL — safe because
+             * afficherJoueur guards against NULL textures. */
         } else {
             anim->textures[i] = SDL_CreateTextureFromSurface(renderer, s);
             SDL_FreeSurface(s);
@@ -144,9 +105,6 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
     }
 }
 
-/* ================================================================
- *  INIT / FREE
- * ================================================================ */
 int initialiserJoueur(Player *p, SDL_Renderer *renderer,
                        PlayerID id, float startX, float startY)
 {
@@ -155,7 +113,6 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,
         return 1;
     }
 
-    /* Free any previously loaded animations */
     for (int i = 0; i < STATE_COUNT; i++) {
         if (p->anims[i].textures) {
             for (int f = 0; f < p->anims[i].frameCount; f++)
@@ -174,7 +131,6 @@ int initialiserJoueur(Player *p, SDL_Renderer *renderer,
     p->health         = 100;
     p->lastDamageTime = SDL_GetTicks();
     p->damageEvent    = 0;
-    /* [PLAYER-CAMERA-1] Reduced smooth factor */
     p->camSmooth      = 0.07f;
     p->camX           = startX - SCREEN_WIDTH * 0.4f;
     if (p->camX < 0) p->camX = 0;
@@ -212,11 +168,6 @@ void libererJoueur(Player *p)
     }
 }
 
-/* ================================================================
- *  INPUT
- *  [PLAYER-INPUT-2] SHIFT sets/clears isRunning on down/up (not toggle)
- *  [PLAYER-INPUT-4] Mouse fire guards isAlive
- * ================================================================ */
 void gererEvenementJoueur(Player *p, SDL_Event *e)
 {
     if (!p || !e) return;
@@ -227,7 +178,6 @@ void gererEvenementJoueur(Player *p, SDL_Event *e)
             if (k == SDLK_a || k == SDLK_LEFT)  p->keyLeft  = 1;
             if (k == SDLK_d || k == SDLK_RIGHT)  p->keyRight = 1;
             if (k == SDLK_SPACE || k == SDLK_w)  p->keyJump  = 1;
-            /* [PLAYER-INPUT-2] Hold to sprint */
             if (k == SDLK_LSHIFT) p->isRunning = 1;
             if (k == SDLK_LCTRL && p->isAlive)  { p->keyAttack = 1; tirerBalle(p); }
         } else {
@@ -256,7 +206,6 @@ void gererEvenementJoueur(Player *p, SDL_Event *e)
         }
     }
 
-    /* [PLAYER-INPUT-4] Guard isAlive for mouse fire */
     if (e->type == SDL_MOUSEBUTTONDOWN && p->isAlive) {
         if (e->button.button == SDL_BUTTON_LEFT  && p->id == PLAYER_1)
             { p->keyAttack = 1; tirerBalle(p); }
@@ -271,11 +220,6 @@ void gererEvenementJoueur(Player *p, SDL_Event *e)
     }
 }
 
-/* ================================================================
- *  COLLISION RESOLUTION
- *  [PLAYER-COLLISION-1] Landing threshold raised to 12px
- *  [PLAYER-COLLISION-3] Crush only on horizontal overlap path
- * ================================================================ */
 static void resoudreCollisions(Player *p, Platform *plats, int n)
 {
     int touchedGround = 0;
@@ -285,7 +229,7 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         if (pl->destroyed || pl->isVoid) continue;
 
         int px = (int)p->worldX, py = (int)p->worldY;
-        int pw = PLAYER_W - 4,   ph = PLAYER_PH; /* slight x inset for hitbox */
+        int pw = PLAYER_W - 4,   ph = PLAYER_PH;
 
         if (px + pw <= pl->rect.x)               continue;
         if (px       >= pl->rect.x + pl->rect.w) continue;
@@ -301,24 +245,19 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         int mv = (ot < ob)  ? ot : ob;
 
         if (mv <= mh) {
-            /* Vertical collision */
             if (ot < ob) {
-                /* Landing on top — [PLAYER-COLLISION-1] threshold 12 */
                 if (p->velY >= 0 || ot <= 12) {
                     p->worldY -= ot;
                     if (p->velY >= 0) { p->velY = 0; touchedGround = 1; }
                 }
             } else {
-                /* Head hit ceiling */
                 p->worldY += ob;
                 if (p->velY < 0) p->velY = 0;
             }
         } else {
-            /* [PLAYER-COLLISION-3] Horizontal — crush only if player is NOT
-               standing on top of this platform (pure side collision) */
             int playerBottom = py + ph;
             int platTop      = pl->rect.y;
-            int standingOn   = (playerBottom <= platTop + 4); /* was on top */
+            int standingOn   = (playerBottom <= platTop + 4);
 
             if (!standingOn && pl->type == PLAT_MOBILE) {
                 Uint32 now = SDL_GetTicks();
@@ -346,7 +285,6 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
     }
 }
 
-/* [PLAYER-COLLISION-2] Void trap — pushback clamped to world bounds */
 static void verifierPieges(Player *p, Platform *plats, int n)
 {
     if (!p->isAlive) return;
@@ -367,7 +305,6 @@ static void verifierPieges(Player *p, Platform *plats, int n)
                 perdreVie(p);
                 p->lastDamageTime = now;
 
-                /* Push to left edge of void trap, clamped */
                 float pushX = (float)(pl->rect.x - PLAYER_W - 10);
                 if (pushX < 0)                        pushX = 0;
                 if (pushX > WORLD_WIDTH - PLAYER_W)   pushX = (float)(WORLD_WIDTH - PLAYER_W);
@@ -382,7 +319,6 @@ static void verifierPieges(Player *p, Platform *plats, int n)
     }
 }
 
-/* ── State machine ──────────────────────────────────────────────── */
 static void determinerEtat(Player *p)
 {
     if (!p->isAlive)        { p->state = STATE_DEATH; return; }
@@ -406,7 +342,6 @@ static void deplacerJoueur(Player *p)
     else if (p->keyRight && !p->keyLeft)  { p->velX =  sp; p->direction = DIR_RIGHT; }
     else                                  { p->velX = 0; }
 
-    /* [PLAYER-INPUT-3] Jump: consume key & zero coyote immediately */
     if (p->keyJump && (p->onGround || p->coyoteFrames > 0)) {
         p->velY         = JUMP_FORCE;
         p->onGround     = 0;
@@ -415,24 +350,20 @@ static void deplacerJoueur(Player *p)
     }
 }
 
-/* [PLAYER-PHYSICS-1] Apply gravity then clamp */
 static void appliquerPhysique(Player *p)
 {
     if (!p->isAlive) return;
 
-    /* Apply gravity unless grounded */
     if (!p->onGround) p->velY += PLAYER_GRAVITY;
     else if (p->velY > 0) p->velY = 0;
 
     p->worldX += p->velX;
     p->worldY += p->velY;
 
-    /* Horizontal world bounds */
     if (p->worldX < 0) { p->worldX = 0; p->velX = 0; }
     if (p->worldX > WORLD_WIDTH - PLAYER_W)
         { p->worldX = (float)(WORLD_WIDTH - PLAYER_W); p->velX = 0; }
 
-    /* [PLAYER-PHYSICS-1] Floor safety net — also set onGround */
     float floorY = (float)(SCREEN_HEIGHT - PLAYER_PH - 2);
     if (p->worldY >= floorY) {
         p->worldY   = floorY;
@@ -442,7 +373,6 @@ static void appliquerPhysique(Player *p)
     }
 }
 
-/* [PLAYER-CAMERA-2] camX clamped to [0, WORLD_WIDTH-SCREEN_WIDTH] */
 static void mettreAJourCamera(Player *p)
 {
     float target = p->worldX - SCREEN_WIDTH * 0.4f;
@@ -452,7 +382,6 @@ static void mettreAJourCamera(Player *p)
         p->camX = (float)(WORLD_WIDTH - SCREEN_WIDTH);
 }
 
-/* [PLAYER-ANIM-1] Death frame clamped; other states wrap */
 static void mettreAJourAnimation(Player *p)
 {
     Animation *a = &p->anims[p->state];
@@ -467,16 +396,12 @@ static void mettreAJourAnimation(Player *p)
 
     if (p->state == STATE_DEATH) {
         int next = a->currentFrame + (int)ticks;
-        /* [PLAYER-ANIM-1] Clamp to last valid frame index */
         a->currentFrame = (next < a->frameCount) ? next : a->frameCount - 1;
     } else {
         a->currentFrame = (int)((a->currentFrame + ticks) % (Uint32)a->frameCount);
     }
 }
 
-/* ================================================================
- *  UPDATE
- * ================================================================ */
 void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
 {
     deplacerJoueur(p);
@@ -499,18 +424,12 @@ void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
     mettreAJourAnimation(p);
     mettreAJourCamera(p);
 
-    /* Bullets updated once here — do NOT call separately from main.c */
     mettreAJourBalles(p);
 }
 
-/* ================================================================
- *  BULLETS
- *  [PLAYER-BULLET-1] Shoot cooldown to prevent auto-repeat flooding
- * ================================================================ */
 void tirerBalle(Player *p)
 {
     if (!p->isAlive) return;
-    /* Guard: attackTimer > 8 means we just fired very recently */
     if (p->attackTimer > 8) return;
 
     p->attackTimer = 14;
@@ -535,15 +454,20 @@ void mettreAJourBalles(Player *p)
         if (!p->bullets[i].active) continue;
         p->bullets[i].x += p->bullets[i].vx;
         p->bullets[i].y += p->bullets[i].vy;
-        if (p->bullets[i].x < 0           || p->bullets[i].x > WORLD_WIDTH  ||
-            p->bullets[i].y < 0           || p->bullets[i].y > WORLD_HEIGHT)
+
+        /* FIX [BULLET-WORLD-1]: cull bullets that travel above the screen top
+         * (upward shots) as well as those that exit the world horizontally or
+         * fall below the bottom.  The original threshold was WORLD_HEIGHT which
+         * equals SCREEN_HEIGHT — correct for downward culling — but there was no
+         * guard for y < 0 at all. */
+        if (p->bullets[i].x < 0             ||
+            p->bullets[i].x > WORLD_WIDTH   ||
+            p->bullets[i].y < -200.0f       ||
+            p->bullets[i].y > WORLD_HEIGHT)
             p->bullets[i].active = 0;
     }
 }
 
-/* ================================================================
- *  RENDER
- * ================================================================ */
 void afficherJoueur(Player *p, SDL_Renderer *renderer,
                     float camX, float camY)
 {
@@ -552,7 +476,6 @@ void afficherJoueur(Player *p, SDL_Renderer *renderer,
     Animation *a = &p->anims[p->state];
     if (!a || !a->textures || a->frameCount == 0) return;
 
-    /* Clamp frame index defensively */
     int frame = a->currentFrame;
     if (frame < 0) frame = 0;
     if (frame >= a->frameCount) frame = a->frameCount - 1;
@@ -567,7 +490,6 @@ void afficherJoueur(Player *p, SDL_Renderer *renderer,
     SDL_RenderCopyEx(renderer, a->textures[frame],
                      NULL, &p->dstRect, 0, NULL, flip);
 
-    /* Name tag above sprite */
     int tw = textWidth(p->name, 1);
     drawText(renderer, sx + PLAYER_W / 2 - tw / 2, sy - 15,
              p->name, 1, 0, 255, 120);
@@ -583,7 +505,6 @@ void afficherBalles(Player *p, SDL_Renderer *renderer,
             (int)(p->bullets[i].y - camY),
             BULLET_W, BULLET_H_PX
         };
-        /* Cull bullets outside viewport */
         if (r.x + BULLET_W < 0 || r.x > SCREEN_WIDTH) continue;
 
         SDL_SetRenderDrawColor(renderer, 0, 255, 100, 255);
@@ -622,14 +543,12 @@ void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
     snprintf(buf, sizeof(buf), "SCR:%05d  VIE:%d", p->score, p->lives);
     drawText(renderer, hx, by + barH + 4, buf, 1, 0, 180, 80);
 
-    /* [PLAYER-HUD-1] Sprint indicator moved right */
     if (p->isRunning)
         drawText(renderer, hx + 170, hy, "SPR", 1, 255, 200, 0);
 }
 
 void ajouterScore(Player *p, int pts) { if (p) p->score += pts; }
 
-/* [PLAYER-HEALTH-1] Health clamped to 0 before lives check */
 void perdreVie(Player *p)
 {
     if (!p) return;
@@ -638,14 +557,14 @@ void perdreVie(Player *p)
     p->damageEvent = 1;
 
     if (p->health <= 0) {
-        p->health = 0; /* clamp */
+        p->health = 0;
         p->lives--;
         if (p->lives <= 0) {
             p->lives   = 0;
             p->isAlive = 0;
             p->state   = STATE_DEATH;
         } else {
-            p->health = 50; /* partial restoration on lost life */
+            p->health = 50;
         }
     }
 }

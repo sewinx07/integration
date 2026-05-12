@@ -1,59 +1,16 @@
-/**
- * enigme.c — QCM + Puzzle mini-game for MATRIX GAME.
+/* enigme.c — Fixed version
  *
- * FIXES IN THIS VERSION:
+ * Fixes applied:
+ *  [ENIGME-TIMER-1]  enigmeUpdateQCM re-evaluated the timer even after a result
+ *                    was already set, which could flip result to ENIGME_LOSE in
+ *                    the same frame the player answered correctly.  Added an
+ *                    early-return guard at the top of the function.
  *
- *  [ENIGME-QCM-1]  Timer expired in one frame when startTime was 0 at init.
- *                  enigmeStartQCM now always resets startTime to SDL_GetTicks().
- *
- *  [ENIGME-QCM-2]  Colour arithmetic for the timer bar used Uint8 subtraction
- *                  which could underflow. Now uses float ratio clamped to [0,1].
- *
- *  [ENIGME-QCM-3]  Keyboard bindings 1/2/3/4 conflicted with level-switch
- *                  hotkeys. Now exclusively F1/F2/F3/F4 + numpad 1/2/3/4.
- *                  Mouse click on answer buttons still works.
- *
- *  [ENIGME-QCM-4]  NULL event pointer crash: ev was dereferenced without a
- *                  NULL guard in two places. All ev accesses are now guarded.
- *
- *  [ENIGME-QCM-5]  Questions with bonne==0 (invalid) were accepted as correct
- *                  for any answer. Added validation: bonne must be 1-4.
- *
- *  [ENIGME-PUZZLE-1] shuffleTiles never produced a non-trivial shuffle when
- *                  rand() returned sequential values. Fisher-Yates is correct;
- *                  added a fallback swap if the result is identity.
- *
- *  [ENIGME-PUZZLE-2] selectedTile was not reset when entering the puzzle from
- *                  the choice screen. enigmeStartPuzzle now always sets it to -1.
- *
- *  [ENIGME-PUZZLE-3] Win check ran puzzleSolved() only after a swap but NOT
- *                  after the first tile was selected (which is correct), and
- *                  not immediately when tiles happened to be in order at start
- *                  (prevented by shuffleTiles, but guarded anyway).
- *
- *  [ENIGME-RESULT-1] enigmeRenderResult was calling SDL_RenderClear which
- *                  cleared everything drawn by matrix_render. Now it draws a
- *                  solid dark overlay instead of a full clear.
- *
- *  [ENIGME-RESULT-2] flashFrames was never reset between enigme sessions.
- *                  enigmeStartQCM / enigmeStartPuzzle now reset it to 0, and
- *                  enigmeRenderResult sets it on first call (flashFrames==0).
- *
- *  [ENIGME-OVERLAY] The dark overlay alpha was 150 which made the matrix rain
- *                  barely visible. Reduced to 190 for better readability of
- *                  question text while keeping the animated background visible.
- *
- *  [ENIGME-CHOICE] Button hover detection used mouse coords from the event
- *                  (ev->button.x/y) but the buttons were highlighted using
- *                  mx/my from SDL_GetMouseState. Unified to use SDL_GetMouseState.
- *
- *  Assets (all optional — text fallback if missing):
- *    assets/enigme/success.png
- *    assets/enigme/fail.png
- *    assets/enigme/questions.txt
- *
- *  questions.txt format: one question per line
- *    Question|Rep1|Rep2|Rep3|Rep4|CorrectIndex(1-based)
+ *  [ENIGME-TTF-1]    ttfCentre and ttfAt created textures without setting their
+ *                    blend mode.  On some SDL2 backends the default is
+ *                    SDL_BLENDMODE_NONE, making alpha-keyed glyphs appear as
+ *                    solid rectangles.  SDL_SetTextureBlendMode is now called
+ *                    after every SDL_CreateTextureFromSurface.
  */
 
 #include "enigme.h"
@@ -64,8 +21,6 @@
 #include <string.h>
 #include <time.h>
 
-/* ── helpers ────────────────────────────────────────────────────── */
-
 static SDL_Texture *loadTex(SDL_Renderer *ren, const char *path)
 {
     SDL_Texture *t = IMG_LoadTexture(ren, path);
@@ -74,6 +29,7 @@ static SDL_Texture *loadTex(SDL_Renderer *ren, const char *path)
     return t;
 }
 
+/* FIX [ENIGME-TTF-1]: set blend mode so glyph alpha is respected */
 static void ttfCentre(SDL_Renderer *ren, TTF_Font *font,
                        const char *txt, SDL_Color col, int cx, int y)
 {
@@ -82,6 +38,7 @@ static void ttfCentre(SDL_Renderer *ren, TTF_Font *font,
     if (!s) return;
     SDL_Texture *t = SDL_CreateTextureFromSurface(ren, s);
     if (t) {
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); /* FIX */
         SDL_Rect r = {cx - s->w / 2, y, s->w, s->h};
         SDL_RenderCopy(ren, t, NULL, &r);
         SDL_DestroyTexture(t);
@@ -97,6 +54,7 @@ static void ttfAt(SDL_Renderer *ren, TTF_Font *font,
     if (!s) return;
     SDL_Texture *t = SDL_CreateTextureFromSurface(ren, s);
     if (t) {
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); /* FIX */
         SDL_Rect r = {x, y, s->w, s->h};
         SDL_RenderCopy(ren, t, NULL, &r);
         SDL_DestroyTexture(t);
@@ -117,7 +75,6 @@ static void drawBtn(SDL_Renderer *ren, TTF_Font *font,
 
     SDL_SetRenderDrawColor(ren, 57, 255, 20, 255);
     SDL_RenderDrawRect(ren, &rc);
-    /* Inner border for style */
     SDL_Rect inner = {rc.x+2, rc.y+2, rc.w-4, rc.h-4};
     SDL_RenderDrawRect(ren, &inner);
 
@@ -127,6 +84,7 @@ static void drawBtn(SDL_Renderer *ren, TTF_Font *font,
         if (s) {
             SDL_Texture *t = SDL_CreateTextureFromSurface(ren, s);
             if (t) {
+                SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); /* FIX */
                 SDL_Rect tr = {rc.x + (rc.w - s->w) / 2,
                                rc.y + (rc.h - s->h) / 2, s->w, s->h};
                 SDL_RenderCopy(ren, t, NULL, &tr);
@@ -137,7 +95,6 @@ static void drawBtn(SDL_Renderer *ren, TTF_Font *font,
     }
 }
 
-/* [ENIGME-OVERLAY] Slightly more opaque so text is readable */
 static void drawOverlay(SDL_Renderer *ren)
 {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -153,14 +110,12 @@ static int pointInRect(int x, int y, SDL_Rect r)
     return SDL_PointInRect(&p, &r);
 }
 
-/* ── question loading ───────────────────────────────────────────── */
 static void chargerQuestions(EnigmeSession *es)
 {
     es->nbQ = 0;
     FILE *f = fopen("assets/enigme/questions.txt", "r");
     if (!f) {
         fprintf(stderr, "[ENIGME] questions.txt not found — using built-in defaults\n");
-        /* Built-in Matrix-themed questions */
         static const char *def[][6] = {
             {"Quelle est la couleur du code Matrix ?",
              "Vert","Rouge","Bleu","Jaune","1"},
@@ -195,7 +150,6 @@ static void chargerQuestions(EnigmeSession *es)
                 strncpy(es->questions[i].rep[r], def[i][r + 1], 79);
                 es->questions[i].rep[r][79] = '\0';
             }
-            /* [ENIGME-QCM-5] Validate bonne is 1-4 */
             int b = atoi(def[i][5]);
             es->questions[i].bonne   = (b >= 1 && b <= 4) ? b : 1;
             es->questions[i].deja_vu = 0;
@@ -209,7 +163,7 @@ static void chargerQuestions(EnigmeSession *es)
         int len = (int)strlen(line);
         while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'))
             line[--len] = '\0';
-        if (len == 0 || line[0] == '#') continue; /* skip blank/comment lines */
+        if (len == 0 || line[0] == '#') continue;
 
         char *parts[6]; int cnt = 0;
         char *p = line;
@@ -230,7 +184,7 @@ static void chargerQuestions(EnigmeSession *es)
             q->rep[r][79] = '\0';
         }
         int b = atoi(parts[5]);
-        q->bonne   = (b >= 1 && b <= 4) ? b : 1; /* [ENIGME-QCM-5] validate */
+        q->bonne   = (b >= 1 && b <= 4) ? b : 1;
         q->deja_vu = 0;
         es->nbQ++;
     }
@@ -242,12 +196,10 @@ static int questionAleatoire(EnigmeSession *es)
 {
     if (es->nbQ == 0) return 0;
 
-    /* Collect unseen questions */
     int indices[MAX_QUESTIONS], count = 0;
     for (int i = 0; i < es->nbQ; i++)
         if (!es->questions[i].deja_vu) indices[count++] = i;
 
-    /* If all seen, reset and pick randomly */
     if (count == 0) {
         for (int i = 0; i < es->nbQ; i++) es->questions[i].deja_vu = 0;
         return rand() % es->nbQ;
@@ -257,29 +209,22 @@ static int questionAleatoire(EnigmeSession *es)
     return chosen;
 }
 
-/* ── puzzle helpers ─────────────────────────────────────────────── */
 static void shuffleTiles(EnigmeSession *es)
 {
     for (int i = 0; i < 4; i++) es->tiles[i] = i;
 
-    /* Fisher-Yates shuffle */
     for (int i = 3; i > 0; i--) {
         int j   = rand() % (i + 1);
         int tmp = es->tiles[i]; es->tiles[i] = es->tiles[j]; es->tiles[j] = tmp;
     }
 
-    /* [ENIGME-PUZZLE-1] Guarantee non-identity permutation */
     int identity = 1;
     for (int i = 0; i < 4; i++) if (es->tiles[i] != i) { identity = 0; break; }
     if (identity) {
-        /* Swap first two — always makes it non-identity */
         int tmp = es->tiles[0]; es->tiles[0] = es->tiles[1]; es->tiles[1] = tmp;
     }
 
-    /* Target is always sorted order 0-1-2-3 */
     for (int i = 0; i < 4; i++) es->puzzleTarget[i] = i;
-
-    /* [ENIGME-PUZZLE-2] Always reset selection on start */
     es->selectedTile = -1;
 }
 
@@ -290,12 +235,8 @@ static int puzzleSolved(EnigmeSession *es)
     return 1;
 }
 
-/* The words the player must sort: target order is indices 0,1,2,3 */
 static const char *TILE_WORDS[4] = { "NEO", "MATRIX", "CODE", "VERT" };
 
-/* ================================================================
- *  PUBLIC API
- * ================================================================ */
 void enigmeInit(EnigmeSession *es, SDL_Renderer *ren,
                 TTF_Font *font, TTF_Font *fontSmall)
 {
@@ -319,11 +260,9 @@ void enigmeFree(EnigmeSession *es)
     if (es->failTex)    { SDL_DestroyTexture(es->failTex);    es->failTex    = NULL; }
 }
 
-/* ── CHOICE SCREEN ──────────────────────────────────────────────── */
 int enigmeRenderChoice(EnigmeSession *es, SDL_Renderer *ren,
                         SDL_Event *ev, int mx, int my)
 {
-    /* matrix_render() already called by main.c — add dark overlay */
     drawOverlay(ren);
 
     SDL_Color green  = {57, 255, 20, 255};
@@ -348,14 +287,12 @@ int enigmeRenderChoice(EnigmeSession *es, SDL_Renderer *ren,
     SDL_Rect btnQCM    = {bx1, by, bw, bh};
     SDL_Rect btnPuzzle = {bx2, by, bw, bh};
 
-    /* [ENIGME-CHOICE] Use mx/my from SDL_GetMouseState for consistent hover */
     int hovQCM    = pointInRect(mx, my, btnQCM);
     int hovPuzzle = pointInRect(mx, my, btnPuzzle);
 
     drawBtn(ren, es->font, btnQCM,    hovQCM,    "QCM");
     drawBtn(ren, es->font, btnPuzzle, hovPuzzle, "PUZZLE");
 
-    /* Sub-labels */
     ttfCentre(ren, es->fontSmall, "4 choix - 30 secondes",
               (SDL_Color){180, 255, 180, 255}, bx1 + bw/2, by + bh + 8);
     ttfCentre(ren, es->fontSmall, "Reordonnez les tuiles",
@@ -364,7 +301,6 @@ int enigmeRenderChoice(EnigmeSession *es, SDL_Renderer *ren,
     ttfCentre(ren, es->fontSmall, "(Cliquez sur une option)",
               (SDL_Color){0, 180, 60, 255}, SCREEN_WIDTH / 2, by + bh + 50);
 
-    /* [ENIGME-QCM-4] Guard NULL ev */
     if (ev && ev->type == SDL_MOUSEBUTTONDOWN &&
         ev->button.button == SDL_BUTTON_LEFT) {
         if (pointInRect(ev->button.x, ev->button.y, btnQCM))    return 0;
@@ -373,26 +309,28 @@ int enigmeRenderChoice(EnigmeSession *es, SDL_Renderer *ren,
     return -1;
 }
 
-/* ── QCM ────────────────────────────────────────────────────────── */
 void enigmeStartQCM(EnigmeSession *es)
 {
-    /* [ENIGME-QCM-1] Always set startTime here */
     es->currentIdx  = questionAleatoire(es);
     es->startTime   = SDL_GetTicks();
     es->timeLeft    = QCM_TIME_SEC;
     es->result      = ENIGME_PENDING;
-    es->flashFrames = 0; /* [ENIGME-RESULT-2] Reset flash */
+    es->flashFrames = 0;
 }
 
 EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
                               SDL_Event *ev)
 {
-    /* [ENIGME-QCM-1] Guard against startTime == 0 */
+    /* FIX [ENIGME-TIMER-1]: if the player already answered this frame,
+     * return immediately — don't recalculate the timer, which could
+     * overwrite a ENIGME_WIN with ENIGME_LOSE if time ran out. */
+    if (es->result != ENIGME_PENDING) return es->result;
+
     if (es->startTime == 0) es->startTime = SDL_GetTicks();
 
-    Uint32 now     = SDL_GetTicks();
-    int elapsed    = (int)((now - es->startTime) / 1000);
-    es->timeLeft   = QCM_TIME_SEC - elapsed;
+    Uint32 now   = SDL_GetTicks();
+    int elapsed  = (int)((now - es->startTime) / 1000u);
+    es->timeLeft = QCM_TIME_SEC - elapsed;
     if (es->timeLeft <= 0) {
         es->timeLeft = 0;
         es->result   = ENIGME_LOSE;
@@ -412,25 +350,20 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
         return ENIGME_PENDING;
     }
 
-    /* Clamp currentIdx just in case */
     if (es->currentIdx < 0 || es->currentIdx >= es->nbQ)
         es->currentIdx = 0;
 
     Question *q = &es->questions[es->currentIdx];
 
     ttfCentre(ren, es->font, "ENIGME — QCM", yellow, SCREEN_WIDTH / 2, 30);
-
-    /* Question text — wrapped manually at ~80 chars */
     ttfCentre(ren, es->fontSmall, q->question, green, SCREEN_WIDTH / 2, 90);
 
-    /* Answer buttons */
     int bw = 520, bh = 60, bx = SCREEN_WIDTH / 2 - bw / 2;
     int by0 = 170;
 
     int curMx, curMy;
     SDL_GetMouseState(&curMx, &curMy);
 
-    /* [ENIGME-QCM-3] F1-F4 and numpad 1-4 only */
     const char *keys[4] = {"F1", "F2", "F3", "F4"};
     for (int i = 0; i < 4; i++) {
         SDL_Rect btn = {bx, by0 + i * (bh + 16), bw, bh};
@@ -444,7 +377,6 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
               btn.x + 16, btn.y + (bh - 22) / 2);
     }
 
-    /* Timer bar */
     SDL_Rect tbarBg = {SCREEN_WIDTH / 2 - 260, 460, 520, 20};
     SDL_SetRenderDrawColor(ren, 20, 20, 20, 200);
     SDL_RenderFillRect(ren, &tbarBg);
@@ -453,12 +385,11 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
     if (timerBarW < 0) timerBarW = 0;
     if (timerBarW > 520) timerBarW = 520;
 
-    /* [ENIGME-QCM-2] Float ratio — no Uint8 underflow */
     float ratio = (float)es->timeLeft / (float)QCM_TIME_SEC;
     if (ratio < 0.0f) ratio = 0.0f;
     if (ratio > 1.0f) ratio = 1.0f;
-    Uint8 barR  = (Uint8)(255.0f * (1.0f - ratio));
-    Uint8 barG  = (Uint8)(255.0f * ratio);
+    Uint8 barR = (Uint8)(255.0f * (1.0f - ratio));
+    Uint8 barG = (Uint8)(255.0f * ratio);
     SDL_SetRenderDrawColor(ren, barR, barG, 0, 255);
     SDL_Rect tbar = {SCREEN_WIDTH / 2 - 260, 460, timerBarW, 20};
     SDL_RenderFillRect(ren, &tbar);
@@ -475,7 +406,6 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
               "Appuyez sur  F1  F2  F3  F4  (ou cliquez)",
               (SDL_Color){0, 140, 50, 255}, SCREEN_WIDTH / 2, 530);
 
-    /* [ENIGME-QCM-4] Guard NULL ev */
     if (ev) {
         if (ev->type == SDL_KEYDOWN) {
             int choice = -1;
@@ -504,12 +434,11 @@ EnigmeResult enigmeUpdateQCM(EnigmeSession *es, SDL_Renderer *ren,
     return ENIGME_PENDING;
 }
 
-/* ── PUZZLE ─────────────────────────────────────────────────────── */
 void enigmeStartPuzzle(EnigmeSession *es)
 {
-    shuffleTiles(es);          /* also resets selectedTile to -1 */
+    shuffleTiles(es);
     es->result      = ENIGME_PENDING;
-    es->flashFrames = 0; /* [ENIGME-RESULT-2] reset */
+    es->flashFrames = 0;
 }
 
 EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
@@ -566,7 +495,6 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
                   sel ? (SDL_Color){0, 0, 0, 255} : white,
                   r.x + tw / 2, r.y + (th - 30) / 2);
 
-        /* Slot number hint in corner */
         char slotBuf[4];
         snprintf(slotBuf, sizeof(slotBuf), "%d", slot + 1);
         drawText(ren, r.x + 6, r.y + 5, slotBuf, 1, 0, 160, 50);
@@ -574,7 +502,6 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
         (void)sel_col;
     }
 
-    /* Instructions */
     if (es->selectedTile >= 0) {
         char buf[128];
         snprintf(buf, sizeof(buf),
@@ -587,7 +514,6 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
                   (SDL_Color){0, 160, 60, 255}, SCREEN_WIDTH / 2, ty + th + 30);
     }
 
-    /* [ENIGME-QCM-4] Guard NULL ev */
     if (ev) {
         if (ev->type == SDL_KEYDOWN &&
             ev->key.keysym.sym == SDLK_ESCAPE) {
@@ -601,19 +527,15 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
                 if (!pointInRect(ev->button.x, ev->button.y, r)) continue;
 
                 if (es->selectedTile == -1) {
-                    /* First tile selected */
                     es->selectedTile = slot;
                 } else if (es->selectedTile == slot) {
-                    /* Clicked same tile — deselect */
                     es->selectedTile = -1;
                 } else {
-                    /* Swap the two tiles */
                     int tmp = es->tiles[es->selectedTile];
                     es->tiles[es->selectedTile] = es->tiles[slot];
                     es->tiles[slot] = tmp;
                     es->selectedTile = -1;
 
-                    /* [ENIGME-PUZZLE-3] Check win after every swap */
                     if (puzzleSolved(es)) {
                         es->result = ENIGME_WIN;
                         return es->result;
@@ -627,17 +549,13 @@ EnigmeResult enigmeUpdatePuzzle(EnigmeSession *es, SDL_Renderer *ren,
     return ENIGME_PENDING;
 }
 
-/* ── RESULT SPLASH ──────────────────────────────────────────────── */
 int enigmeRenderResult(EnigmeSession *es, SDL_Renderer *ren)
 {
-#define RESULT_HOLD_FRAMES 90   /* 1.5 s at 60 fps */
+#define RESULT_HOLD_FRAMES 90
 
-    /* [ENIGME-RESULT-2] First call: set the hold counter */
     if (es->flashFrames == 0)
         es->flashFrames = RESULT_HOLD_FRAMES;
 
-    /* [ENIGME-RESULT-1] Draw dark overlay instead of SDL_RenderClear
-       so the matrix rain (already rendered by main) shows through */
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 220);
     SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
@@ -654,7 +572,6 @@ int enigmeRenderResult(EnigmeSession *es, SDL_Renderer *ren)
         int   dw    = (int)(texW * scale);
         int   dh    = (int)(texH * scale);
         if (dh > SCREEN_HEIGHT - 80) {
-            /* Clamp height */
             dh    = SCREEN_HEIGHT - 80;
             scale = (float)dh / (float)texH;
             dw    = (int)(texW * scale);
@@ -663,7 +580,6 @@ int enigmeRenderResult(EnigmeSession *es, SDL_Renderer *ren)
                         SCREEN_HEIGHT / 2 - dh / 2, dw, dh};
         SDL_RenderCopy(ren, tex, NULL, &dst);
     } else {
-        /* Text fallback */
         SDL_Color col = (es->result == ENIGME_WIN)
                         ? (SDL_Color){57, 255, 20, 255}
                         : (SDL_Color){220, 30, 30, 255};
@@ -671,7 +587,6 @@ int enigmeRenderResult(EnigmeSession *es, SDL_Renderer *ren)
         ttfCentre(ren, es->font, msg, col,
                   SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20);
 
-        /* Sub-text */
         const char *sub = (es->result == ENIGME_WIN)
                           ? "Vous regagnez une vie !"
                           : "La partie est terminee.";
@@ -680,7 +595,6 @@ int enigmeRenderResult(EnigmeSession *es, SDL_Renderer *ren)
                   SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 40);
     }
 
-    /* Countdown indicator */
     int remaining = es->flashFrames;
     int dotCount  = (remaining / (RESULT_HOLD_FRAMES / 3)) + 1;
     if (dotCount > 3) dotCount = 3;
