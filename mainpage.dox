@@ -1,0 +1,110 @@
+/**
+ * @mainpage MATRIX GAME — Developer Documentation
+ *
+ * @image html assets/title.png width=400
+ *
+ * @section intro_sec Overview
+ *
+ * **MATRIX GAME** is a 2-D side-scrolling platformer written in C using
+ * SDL2.  It features:
+ *
+ *  - Two levels with a scrolling parallax background, fixed/mobile/
+ *    destructible platforms, and void traps.
+ *  - Solo and split-screen 2-player modes.
+ *  - Minion enemies with walk/attack AI and a transforming final boss.
+ *  - A bullet-firing system for both players.
+ *  - An "Enigme" mini-game (QCM quiz + tile puzzle) triggered on player
+ *    death — answer correctly to regain a life.
+ *  - A persistent leaderboard saved to `assets/scores.dat`.
+ *  - An animated Matrix digital-rain background effect.
+ *  - Optional Arduino controller support via a Python serial bridge.
+ *
+ * @section arch_sec Architecture
+ *
+ * The project follows a flat module layout — each module is a `.c / .h`
+ * pair.  There is no class hierarchy; structs are passed by pointer.
+ *
+ * @subsection modules_sec Module summary
+ *
+ * | Module       | Header          | Responsibility                                |
+ * |--------------|-----------------|-----------------------------------------------|
+ * | Main loop    | main.c          | App-state machine, SDL init, event routing    |
+ * | Background   | background.h    | Level layout, platforms, camera, scores       |
+ * | Player       | player.h        | Input, physics, animation, bullets, HUD       |
+ * | Enemy        | enemy.h         | Minion + boss AI, animation, health bar       |
+ * | Enigme       | enigme.h        | Death mini-game (QCM + puzzle)                |
+ * | Minimap      | minimap.h       | Minimap overlay + full-screen flash effects   |
+ * | Matrix rain  | matrix.h        | Falling-character background animation        |
+ * | Audio        | audio.h         | Background music + sound effects (SDL_mixer)  |
+ * | Bitmap font  | font.h          | 5×7 pixel font renderer (no TTF dependency)   |
+ * | TTF helper   | text.h          | Thin SDL_ttf surface-to-texture wrapper       |
+ * | Button       | button.h        | Rectangular labelled button widget            |
+ * | Config       | config.h        | Window dimensions + Matrix colour palette     |
+ * | Common       | common.h        | Screen / world size constants                 |
+ * | Asset paths  | assets_paths.h  | Centralised file-path string constants        |
+ *
+ * @section build_sec Building
+ *
+ * @subsection deps_sec Dependencies
+ *
+ *  - gcc (or clang)
+ *  - SDL2, SDL2_image, SDL2_ttf, SDL2_mixer
+ *  - GNU make
+ *
+ * Install on Debian / Ubuntu:
+ * @code
+ *   sudo apt install libsdl2-dev libsdl2-image-dev \
+ *                    libsdl2-ttf-dev libsdl2-mixer-dev
+ * @endcode
+ *
+ * @subsection make_sec Compilation
+ *
+ * @code
+ *   make          # build the 'game' executable
+ *   make run      # build and launch
+ *   make clean    # remove object files and executable
+ *   make rebuild  # clean + build
+ * @endcode
+ *
+ * @section controls_sec Controls
+ *
+ * | Action               | Player 1       | Player 2       |
+ * |----------------------|----------------|----------------|
+ * | Move left / right    | A / D          | ← / →          |
+ * | Jump                 | Space or W     | Enter          |
+ * | Sprint               | Left Shift     | Right Shift    |
+ * | Shoot                | Left Ctrl      | Right Ctrl     |
+ * | Shoot (mouse)        | Left click     | Right click    |
+ * | Break platform       | F              | —              |
+ * | Toggle guide         | H              | —              |
+ * | Pause                | P              | —              |
+ * | Switch level 1/2     | F11 / F12      | —              |
+ * | Quit to menu         | Escape         | —              |
+ *
+ * @section enigme_sec Enigme Mini-Game
+ *
+ * When a player's health reaches zero the game switches to the enigme
+ * challenge.  The player may choose:
+ *
+ *  - **QCM** — 4-option Matrix-themed question with a 30-second countdown.
+ *    Answer with F1–F4 or by clicking the button.
+ *  - **Puzzle** — four tiles must be reordered to spell NEO | MATRIX | CODE | VERT.
+ *    Click two tiles to swap them.  ESC forfeits.
+ *
+ * A correct answer restores the player to 60 HP with one life.  A wrong
+ * answer or timeout triggers the game-over / score-save flow.
+ *
+ * @section arduino_sec Arduino Controller
+ *
+ * An optional Arduino Uno controller is supported.  See
+ * `matrix_controller_final/matrix_controller_final.ino` for the firmware
+ * and `matrix_controller_final/matrix_controller_bridge_final.py` for the
+ * Python serial bridge.
+ *
+ * The bridge listens on stdout for `HIT` and `DEAD` lines printed by main.c
+ * and sends corresponding LED blink commands to the Arduino.
+ *
+ * @section license_sec License
+ *
+ * All source code © the MATRIX GAME project contributors.
+ */

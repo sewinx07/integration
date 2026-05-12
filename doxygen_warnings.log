@@ -1,0 +1,3 @@
+/home/sewinx/Desktop/test-main/include/enigme.h:76: warning: The following parameters of enigmeInit(EnigmeSession *es, SDL_Renderer *ren, TTF_Font *font, TTF_Font *fontSmall) are not documented:
+  parameter 'es'
+  parameter 'ren'
