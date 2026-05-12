@@ -19,6 +19,11 @@
  * All original fixes ([INPUT-1..4], [BOSS-1..4], [ENIGME-1..5],
  * [SPAWN-1..2], [KILL-1], [RENDER-1..2], [HUD-1], [MEMORY-1],
  * [PAUSE-1], [CAMERA-1], [NAMEINPUT-1], [LED-2]) are preserved verbatim.
+ *
+ * [ESC-SAVE-1] ESC during APP_GAME now saves the score before returning
+ *              to the main menu: reuses nameState.name if available,
+ *              otherwise prompts via saisirNomJoueur, then shows the
+ *              leaderboard screen before resuming the menu music.
  */
 
 #include <SDL2/SDL.h>
@@ -151,21 +156,8 @@ static void bbtnDraw(SDL_Renderer *ren, BBtn *b) {
 
 /* ============================================================
  * [CHARSEL-2] CHARACTER SELECTION SCREEN
- *
- * Draws two portrait cards side by side. Each card contains:
- *   - A stylised silhouette drawn with SDL primitives
- *   - Character name + role subtitle
- *   - Three stat bars (SPEED / POWER / AGILITY)
- *   - Animated green scan-line on the hovered card
- *   - Bright border glow when hovered, dim border when not
- *
- * Returns:
- *   -1  nothing selected yet
- *    0  NEO card clicked
- *    1  TRINITY card clicked
  * ============================================================ */
 
-/* Draw a single filled rounded-ish rectangle (just a normal rect for SDL2) */
 static void drawFilledRect(SDL_Renderer *ren, SDL_Rect r,
                             Uint8 rr, Uint8 g, Uint8 b, Uint8 a)
 {
@@ -185,25 +177,20 @@ static void drawBorderedRect(SDL_Renderer *ren, SDL_Rect r,
     }
 }
 
-
-/* Draw a single stat bar: label left, bar right */
 static void drawStatBar(SDL_Renderer *ren, int x, int y,
-                         const char *label, int value /* 0-100 */,
+                         const char *label, int value,
                          Uint8 rr, Uint8 g, Uint8 b)
 {
     drawText(ren, x, y, label, 1, 140, 200, 140);
 
     int bx = x + 80, bw = 120, bh = 8;
-    /* Background */
     SDL_SetRenderDrawColor(ren, 20, 40, 20, 255);
     SDL_Rect bg = {bx, y + 1, bw, bh};
     SDL_RenderFillRect(ren, &bg);
-    /* Fill */
     int fw = bw * value / 100;
     SDL_SetRenderDrawColor(ren, rr, g, b, 255);
     SDL_Rect fill = {bx, y + 1, fw, bh};
     SDL_RenderFillRect(ren, &fill);
-    /* Border */
     SDL_SetRenderDrawColor(ren, 0, 120, 30, 255);
     SDL_RenderDrawRect(ren, &bg);
 }
@@ -212,12 +199,10 @@ static int renderCharacterSelect(SDL_Renderer *ren,
                                   TTF_Font *font, TTF_Font *fontSmall,
                                   SDL_Event *ev, int mx, int my)
 {
-    /* ── background ── */
     SDL_SetRenderDrawColor(ren, 0, 8, 3, 255);
     SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
     SDL_RenderFillRect(ren, &full);
 
-    /* subtle grid overlay */
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(ren, 0, 60, 0, 18);
     for (int gx = 0; gx < SCREEN_WIDTH;  gx += 40)
@@ -226,11 +211,9 @@ static int renderCharacterSelect(SDL_Renderer *ren,
         SDL_RenderDrawLine(ren, 0, gy, SCREEN_WIDTH, gy);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 
-    /* ── title ── */
     SDL_Color green  = {57, 255, 20, 255};
     SDL_Color white  = {220, 255, 220, 255};
 
-    /* Title via TTF */
     SDL_Surface *ts = TTF_RenderText_Blended(font, "CHOISISSEZ VOTRE PERSONNAGE", green);
     if (ts) {
         SDL_Texture *tt = SDL_CreateTextureFromSurface(ren, ts);
@@ -242,7 +225,6 @@ static int renderCharacterSelect(SDL_Renderer *ren,
         SDL_FreeSurface(ts);
     }
 
-    /* subtitle */
     SDL_Surface *sub = TTF_RenderText_Blended(fontSmall,
         "Cliquez sur un personnage pour le selectionner", white);
     if (sub) {
@@ -255,7 +237,6 @@ static int renderCharacterSelect(SDL_Renderer *ren,
         SDL_FreeSurface(sub);
     }
 
-    /* ── card layout ── */
     int cardW = 320, cardH = 440;
     int gap   = 80;
     int totalW = cardW * 2 + gap;
@@ -273,26 +254,17 @@ static int renderCharacterSelect(SDL_Renderer *ren,
 
     Uint32 ticks = SDL_GetTicks();
 
-    /* helper to draw one full card */
     for (int card = 0; card < 2; card++) {
         SDL_Rect cr   = (card == 0) ? card1 : card2;
         int      hov  = (card == 0) ? hov1  : hov2;
         int      cx   = cr.x + cr.w / 2;
 
-        /* card background */
-        drawFilledRect(ren, cr,
-                       hov ? 0 : 0,
-                       hov ? 28 : 14,
-                       hov ? 0 : 0,
-                       hov ? 240 : 200);
+        drawFilledRect(ren, cr, 0, hov ? 28 : 14, 0, hov ? 240 : 200);
 
-        /* glow border */
         if (hov) {
-            /* outer glow — multiple border passes */
             for (int pass = 3; pass >= 1; pass--) {
                 SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-                SDL_SetRenderDrawColor(ren, 57, 255, 20,
-                                       (Uint8)(60 / pass));
+                SDL_SetRenderDrawColor(ren, 57, 255, 20, (Uint8)(60 / pass));
                 SDL_Rect glow = {cr.x - pass, cr.y - pass,
                                  cr.w + pass*2, cr.h + pass*2};
                 SDL_RenderDrawRect(ren, &glow);
@@ -303,7 +275,6 @@ static int renderCharacterSelect(SDL_Renderer *ren,
             drawBorderedRect(ren, cr, 0, 80, 20, 1);
         }
 
-        /* animated scan-line on hovered card */
         if (hov) {
             int scanY = cr.y + (int)((ticks / 6) % (Uint32)cr.h);
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -313,25 +284,20 @@ static int renderCharacterSelect(SDL_Renderer *ren,
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
         }
 
-
-
-        /* portrait image */
         {
             const char *imgPath = (card == 0)
                 ? "assets/sprites/idle/frame0.png"
                 : "assets/personage2/standing/s1.png";
             SDL_Texture *portrait = IMG_LoadTexture(ren, imgPath);
             if (portrait) {
-                /* Scale to fill portrait area inside card, keep aspect ratio */
                 int imgW, imgH;
                 SDL_QueryTexture(portrait, NULL, NULL, &imgW, &imgH);
                 int maxW = cr.w - 20;
-                int maxH = 230;  /* portrait zone height */
+                int maxH = 230;
                 float scale = (float)maxW / imgW;
                 if (imgH * scale > maxH) scale = (float)maxH / imgH;
                 int dw = (int)(imgW * scale);
                 int dh = (int)(imgH * scale);
-                /* dim slightly when not hovered */
                 if (!hov) SDL_SetTextureColorMod(portrait, 130, 130, 130);
                 SDL_Rect pdst = {cx - dw/2, cardY + 18, dw, dh};
                 SDL_RenderCopy(ren, portrait, NULL, &pdst);
@@ -340,7 +306,6 @@ static int renderCharacterSelect(SDL_Renderer *ren,
             }
         }
 
-        /* character name */
         const char *charName = (card == 0) ? "NEO" : "MORPHEUS";
         SDL_Color nameCol = hov ? (SDL_Color){57, 255, 20, 255}
                                 : (SDL_Color){0, 140, 40, 255};
@@ -355,7 +320,6 @@ static int renderCharacterSelect(SDL_Renderer *ren,
             SDL_FreeSurface(ns);
         }
 
-        /* role subtitle */
         const char *role = (card == 0)
             ? "L'ELU - HACKER LEGENDAIRE"
             : "LE GUIDE - MAITRE DU COMBAT";
@@ -371,28 +335,23 @@ static int renderCharacterSelect(SDL_Renderer *ren,
             SDL_FreeSurface(rs);
         }
 
-        /* divider line below subtitle */
         SDL_SetRenderDrawColor(ren, 0, 100, 30, 255);
         SDL_RenderDrawLine(ren, cr.x + 20, cardY + 326,
                                 cr.x + cr.w - 20, cardY + 326);
 
-        /* stat bars */
         int statX  = cr.x + 20;
         int statY0 = cardY + 338;
 
         if (card == 0) {
-            /* NEO: balanced with high power */
-            drawStatBar(ren, statX, statY0 +  0, "VITESSE", 78, 57, 255, 20);
+            drawStatBar(ren, statX, statY0 +  0, "VITESSE",   78, 57, 255, 20);
             drawStatBar(ren, statX, statY0 + 22, "PUISSANCE", 92, 57, 255, 20);
-            drawStatBar(ren, statX, statY0 + 44, "AGILITE", 85, 57, 255, 20);
+            drawStatBar(ren, statX, statY0 + 44, "AGILITE",   85, 57, 255, 20);
         } else {
-            /* TRINITY: high speed, lower power */
-            drawStatBar(ren, statX, statY0 +  0, "VITESSE", 95, 20, 200, 255);
+            drawStatBar(ren, statX, statY0 +  0, "VITESSE",   95, 20, 200, 255);
             drawStatBar(ren, statX, statY0 + 22, "PUISSANCE", 70, 20, 200, 255);
-            drawStatBar(ren, statX, statY0 + 44, "AGILITE", 98, 20, 200, 255);
+            drawStatBar(ren, statX, statY0 + 44, "AGILITE",   98, 20, 200, 255);
         }
 
-        /* "SELECTIONNER" prompt at bottom of card when hovered */
         if (hov) {
             int pulse = (int)(200 + 55 * SDL_sin((double)ticks / 200.0));
             SDL_Surface *sel = TTF_RenderText_Blended(fontSmall, "[ SELECTIONNER ]",
@@ -409,24 +368,22 @@ static int renderCharacterSelect(SDL_Renderer *ren,
                 SDL_FreeSurface(sel);
             }
         }
-    } /* end card loop */
+    }
 
-    /* ESC hint */
     drawTextCentered(ren, cardY + cardH + 22, 0, SCREEN_WIDTH,
                      "ESC = RETOUR", 1, 0, 100, 30);
 
-    /* ── click detection ── */
     if (ev && ev->type == SDL_MOUSEBUTTONDOWN &&
         ev->button.button == SDL_BUTTON_LEFT) {
         int ex = ev->button.x, ey = ev->button.y;
         if (ex >= card1.x && ex <= card1.x + card1.w &&
             ey >= card1.y && ey <= card1.y + card1.h)
-            return 0; /* NEO selected */
+            return 0;
         if (ex >= card2.x && ex <= card2.x + card2.w &&
             ey >= card2.y && ey <= card2.y + card2.h)
-            return 1; /* TRINITY selected */
+            return 1;
     }
-    return -1; /* nothing yet */
+    return -1;
 }
 
 /* ============================================================
@@ -876,7 +833,6 @@ static int nameEntryUpdate(NameEntryState *ns, SDL_Renderer *ren,
         SDL_DestroyTexture(tt); SDL_FreeSurface(ts);
     }
 
-    /* Show selected character name */
     const char *charLabel = (selectedCharacter == 0)
         ? "Personnage : NEO" : "Personnage : MORPHEUS";
     SDL_Color charCol = (selectedCharacter == 0)
@@ -1165,12 +1121,33 @@ int main(int argc, char *argv[]) {
                 /* Global ESC */
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) {
                     if (state == APP_GAME) {
+                        /* ── [ESC-SAVE-1] Save score before leaving ── */
                         SDL_StopTextInput();
+
+                        /* Use the name already typed; if empty prompt for one */
+                        char saveName[MAX_NAME_LEN] = {0};
+                        strncpy(saveName, nameState.name, MAX_NAME_LEN - 1);
+                        if (saveName[0] == '\0')
+                            saisirNomJoueur(ren, saveName);
+
+                        /* Save P1 score */
+                        sauvegarderScore(&bg, saveName, p1.score, currentLevel);
+
+                        /* In multiplayer also save P2 */
+                        if (dispMode == MODE_MULTI) {
+                            char saveName2[MAX_NAME_LEN] = {0};
+                            saisirNomJoueur(ren, saveName2);
+                            sauvegarderScore(&bg, saveName2, p2.score, currentLevel);
+                        }
+
+                        /* Show leaderboard so the player sees their rank */
+                        afficherMeilleursScores(&bg, ren);
+
                         state = APP_MAIN_MENU;
                         if (au && au->music) Mix_PlayMusic(au->music, -1);
                     }
                     else if (state == APP_MODE_SELECT)      state = APP_MAIN_MENU;
-                    else if (state == APP_CHARACTER_SELECT) state = APP_MODE_SELECT; /* [CHARSEL-1] */
+                    else if (state == APP_CHARACTER_SELECT) state = APP_MODE_SELECT;
                     else if (state == APP_OPTION)           state = APP_MAIN_MENU;
                     else if (state == APP_SCORES)           state = APP_MAIN_MENU;
                     else if (state == APP_HISTOIRE)         state = APP_MAIN_MENU;
@@ -1214,7 +1191,6 @@ int main(int argc, char *argv[]) {
                         if (bbtnMouseOn(&btnValider, mx, my)) {
                             chargerScores(&bg);
                             nameEntryInit(&nameState, &bg);
-                            /* [CHARSEL-1] Solo → character select first; multi → straight to name */
                             if (dispMode == MODE_MONO)
                                 state = APP_CHARACTER_SELECT;
                             else
@@ -1222,9 +1198,6 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 }
-
-                /* [CHARSEL-1] CHARACTER SELECT events handled in render section below */
-                /* (click detection is inside renderCharacterSelect) */
 
                 /* OPTION */
                 else if (state == APP_OPTION) {
@@ -1296,7 +1269,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 else if (state == APP_CHARACTER_SELECT) {
-                    enigmeEv    = ev;   /* reuse same buffer slot */
+                    enigmeEv    = ev;
                     hasEnigmeEv = 1;
                 }
 
@@ -1332,7 +1305,6 @@ int main(int argc, char *argv[]) {
             btnRetour.hover  = bbtnMouseOn(&btnRetour,  mx, my);
         }
 
-        /* [CHARSEL-1] matrix rain also active on character select */
         if (state == APP_CHARACTER_SELECT)
             matrix_update(dt, SCREEN_HEIGHT);
 
@@ -1509,26 +1481,24 @@ int main(int argc, char *argv[]) {
             bbtnDraw(ren, &btnRetour);
         }
 
-        /* ---- CHARACTER SELECT ---- [CHARSEL-2] */
+        /* ---- CHARACTER SELECT ---- */
         else if (state == APP_CHARACTER_SELECT) {
             matrix_render(ren, SCREEN_WIDTH);
 
-            /* dim the matrix rain */
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 155);
             SDL_Rect full = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
             SDL_RenderFillRect(ren, &full);
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
 
-            /* Pass buffered event for click detection */
             SDL_Event *charEvPtr = hasEnigmeEv ? &enigmeEv : NULL;
             int choice = renderCharacterSelect(ren, fontMain, fontSmall,
                                                charEvPtr, mx, my);
             if (choice == 0) {
-                selectedCharacter = 0;    /* NEO */
+                selectedCharacter = 0;
                 state = APP_NAME_ENTRY;
             } else if (choice == 1) {
-                selectedCharacter = 1;    /* MORPHEUS */
+                selectedCharacter = 1;
                 state = APP_NAME_ENTRY;
             }
         }
@@ -1551,7 +1521,6 @@ int main(int argc, char *argv[]) {
             else if (wantsEsc) {
                 SDL_StopTextInput();
                 nameState.inputActive = 0;
-                /* [CHARSEL-1] ESC from name entry → back to char select (solo) */
                 if (dispMode == MODE_MONO)
                     state = APP_CHARACTER_SELECT;
                 else
@@ -1576,16 +1545,14 @@ int main(int argc, char *argv[]) {
                 initialiserJoueur(&p1, ren, PLAYER_1, 150.0f, sy);
                 initialiserJoueur(&p2, ren, PLAYER_2, 250.0f, sy);
 
-                /* [CHARSEL-3] Apply selected character name to p1 */
+                /* [CHARSEL-3] Apply selected character name */
                 const char *charName = (selectedCharacter == 0) ? "NEO" : "MORPHEUS";
                 strncpy(p1.name, charName, 31);
                 p1.name[31] = '\0';
-                /* Always use typed player name as display name if provided */
                 if (nameState.name[0] != '\0') {
                     strncpy(p1.name, nameState.name, 31);
                     p1.name[31] = '\0';
                 }
-                /* p2 gets the other character name in solo (unused visually) */
                 strncpy(p2.name, (selectedCharacter == 0) ? "MORPHEUS" : "NEO", 31);
 
                 resetEnemies(minions, MAX_MINIONS, &boss,
