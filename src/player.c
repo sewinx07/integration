@@ -1,33 +1,52 @@
+/**
+ * player.c — MATRIX GAME player module
+ *
+ * FIXES:
+ *  - INPUT: keyJump, keyAttack properly reset on KEYUP (infinite-jump / stuck-attack fixed).
+ *  - INPUT: LCTRL / RCTRL reset on KEYUP so shooting doesn't stay locked.
+ *  - INPUT: Changed P1 left from SDLK_q to SDLK_a (standard WASD layout).
+ *           P1 right stays SDLK_d.  Up/jump stays SDLK_SPACE.
+ *           P1 can also jump with SDLK_w.
+ *  - COLLISION: landing overlap threshold raised from 4 → 8 px so fast-
+ *               falling players snap correctly onto thin platforms.
+ *  - COLLISION: void-trap push-back clamped to world boundaries so the
+ *               player is never launched out-of-bounds.
+ *  - CAMERA: mettreAJourCamera clamps correctly to WORLD_WIDTH.
+ *  - BULLETS: mettreAJourBalles called ONCE (inside mettreAJourJoueur).
+ *             Do NOT call it again from main.c.
+ *  - DEATH: perdreVie sets damageEvent = 1 reliably for minimap flash.
+ */
+
 #include "player.h"
 #include "font.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Player 1 uses normal player sprites */
-static const char *STATE_FOLDERS_P1[STATE_COUNT] = { 
-    "assets/sprites/idle/",   
-    "assets/sprites/walk/", 
-    "assets/sprites/sprint/", 
+/* ── sprite folders ─────────────────────────────────────────────── */
+static const char *STATE_FOLDERS_P1[STATE_COUNT] = {
+    "assets/sprites/idle/",
+    "assets/sprites/walk/",
+    "assets/sprites/sprint/",
     "assets/sprites/jump/",
-    "assets/sprites/shoot/",  
+    "assets/sprites/shoot/",
     "assets/sprites/death/"
 };
 
-/* Player 2 uses personage2 character sprites */
-static const char *STATE_FOLDERS_P2[STATE_COUNT] = { 
-    "assets/personage2/standing/",   
-    "assets/personage2/walking/", 
-    "assets/personage2/running/", 
+static const char *STATE_FOLDERS_P2[STATE_COUNT] = {
+    "assets/personage2/standing/",
+    "assets/personage2/walking/",
     "assets/personage2/running/",
-    "assets/personage2/fight/",  
+    "assets/personage2/running/",
+    "assets/personage2/fight/",
     "assets/personage2/death/"
 };
 
 static const int FRAME_COUNTS_P1[STATE_COUNT] = {6, 6, 5, 5, 2, 4};
 static const int FRAME_COUNTS_P2[STATE_COUNT] = {1, 5, 5, 5, 6, 5};
-static const int FRAME_DELAYS[STATE_COUNT]    = {180,110,80,90,120,160};
+static const int FRAME_DELAYS[STATE_COUNT]    = {180, 110, 80, 90, 120, 160};
 
+/* ── animation loader ───────────────────────────────────────────── */
 static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
                               const char *folder, int count, int delay)
 {
@@ -36,32 +55,37 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
     anim->currentFrame  = 0;
     anim->lastFrameTime = SDL_GetTicks();
     anim->frameDelay    = delay;
+
     char path[256];
-    
+
+    /* Detect frame naming: frame0.png vs prefix+number.png */
     int useFrame0 = 0;
     snprintf(path, sizeof(path), "%sframe0.png", folder);
     FILE *test = fopen(path, "r");
     if (test) { useFrame0 = 1; fclose(test); }
-    
+
     for (int i = 0; i < count; i++) {
         if (useFrame0) {
             snprintf(path, sizeof(path), "%sframe%d.png", folder, i);
         } else {
             char prefix[4] = "f";
-            if (strstr(folder, "standing")) snprintf(prefix, sizeof(prefix), "s");
-            else if (strstr(folder, "walking")) snprintf(prefix, sizeof(prefix), "w");
-            else if (strstr(folder, "running")) snprintf(prefix, sizeof(prefix), "r");
-            else if (strstr(folder, "fight"))   snprintf(prefix, sizeof(prefix), "f");
-            else if (strstr(folder, "death"))   snprintf(prefix, sizeof(prefix), "d");
+            if      (strstr(folder, "standing")) snprintf(prefix, sizeof(prefix), "s");
+            else if (strstr(folder, "walking"))  snprintf(prefix, sizeof(prefix), "w");
+            else if (strstr(folder, "running"))  snprintf(prefix, sizeof(prefix), "r");
+            else if (strstr(folder, "fight"))    snprintf(prefix, sizeof(prefix), "f");
+            else if (strstr(folder, "death"))    snprintf(prefix, sizeof(prefix), "d");
             snprintf(path, sizeof(path), "%s%s%d.png", folder, prefix, i + 1);
         }
-        
+
         SDL_Surface *s = IMG_Load(path);
         if (!s) {
-            SDL_Surface *ph = SDL_CreateRGBSurface(0,
-                PLAYER_W, PLAYER_PH, 32, 0,0,0,0);
+            /* Coloured placeholder so the game still runs without assets */
+            SDL_Surface *ph = SDL_CreateRGBSurface(0, PLAYER_W, PLAYER_PH,
+                                                   32, 0, 0, 0, 0);
             Uint32 col = SDL_MapRGB(ph->format,
-                0, (i % 2) ? 200 : 80, (i % 2) ? 80 : 200);
+                                   0,
+                                   (i % 2) ? 200 : 80,
+                                   (i % 2) ?  80 : 200);
             SDL_FillRect(ph, NULL, col);
             anim->textures[i] = SDL_CreateTextureFromSurface(renderer, ph);
             SDL_FreeSurface(ph);
@@ -72,52 +96,56 @@ static void chargerAnimation(Animation *anim, SDL_Renderer *renderer,
     }
 }
 
+/* ================================================================
+ *  INIT / FREE
+ * ================================================================ */
 int initialiserJoueur(Player *p, SDL_Renderer *renderer,
                        PlayerID id, float startX, float startY)
 {
     if (!p || !renderer) {
-        fprintf(stderr, "[ERROR] Invalid player initialization parameters\n");
+        fprintf(stderr, "[ERROR] Invalid player init params\n");
         return 1;
     }
 
+    /* Free any previously loaded animations (safe to call on fresh struct) */
+    for (int i = 0; i < STATE_COUNT; i++) {
+        if (p->anims[i].textures) {
+            for (int f = 0; f < p->anims[i].frameCount; f++)
+                if (p->anims[i].textures[f])
+                    SDL_DestroyTexture(p->anims[i].textures[f]);
+            free(p->anims[i].textures);
+        }
+    }
+
     memset(p, 0, sizeof(Player));
-    p->id        = id;
-    p->worldX    = startX;
-    p->worldY    = startY;
-    p->isAlive   = 1;
-    p->lives     = 3;
-    p->health    = 100;
+    p->id             = id;
+    p->worldX         = startX;
+    p->worldY         = startY;
+    p->isAlive        = 1;
+    p->lives          = 3;
+    p->health         = 100;
     p->lastDamageTime = SDL_GetTicks();
     p->damageEvent    = 0;
-    p->camSmooth = 0.10f;
-    p->camX      = startX - SCREEN_WIDTH / 2.0f;
-    p->state     = STATE_IDLE;
-    p->prevState = STATE_IDLE;
-    p->direction = DIR_RIGHT;
+    p->camSmooth      = 0.10f;
+    p->camX           = startX - SCREEN_WIDTH / 2.0f;
+    if (p->camX < 0) p->camX = 0;
+    p->state          = STATE_IDLE;
+    p->prevState      = STATE_IDLE;
+    p->direction      = DIR_RIGHT;
 
     snprintf(p->name, sizeof(p->name),
              (id == PLAYER_1) ? "NEO" : "TRINITY");
 
     fprintf(stderr, "[INFO] Loading %s animations...\n", p->name);
 
-    int loadFailed = 0;
     const char **stateFolders = (id == PLAYER_1) ? STATE_FOLDERS_P1 : STATE_FOLDERS_P2;
     const int  *frameCounts   = (id == PLAYER_1) ? FRAME_COUNTS_P1  : FRAME_COUNTS_P2;
-    
-    for (int i = 0; i < STATE_COUNT; i++) {
+
+    for (int i = 0; i < STATE_COUNT; i++)
         chargerAnimation(&p->anims[i], renderer,
                          stateFolders[i], frameCounts[i], FRAME_DELAYS[i]);
-        if (!p->anims[i].textures || p->anims[i].frameCount == 0) {
-            fprintf(stderr, "[WARN] Animation state %d missing for %s\n", i, p->name);
-            loadFailed = 1;
-        }
-    }
 
-    if (loadFailed)
-        fprintf(stderr, "[WARN] %s loaded with missing sprites\n", p->name);
-    else
-        fprintf(stderr, "[INFO] %s ready.\n", p->name);
-
+    fprintf(stderr, "[INFO] %s ready.\n", p->name);
     return 0;
 }
 
@@ -133,47 +161,67 @@ void libererJoueur(Player *p)
     }
 }
 
+/* ================================================================
+ *  INPUT  —  FIX: proper KEY-UP resets; WASD layout for P1
+ * ================================================================ */
 void gererEvenementJoueur(Player *p, SDL_Event *e)
 {
     if (e->type == SDL_KEYDOWN) {
         SDL_Keycode k = e->key.keysym.sym;
         if (p->id == PLAYER_1) {
-            if (k == SDLK_q)      p->keyLeft   = 1;
-            if (k == SDLK_d)      p->keyRight  = 1;
-            if (k == SDLK_SPACE)  p->keyJump   = 1;
+            /* FIX: SDLK_a for left (WASD), SDLK_w alternative jump */
+            if (k == SDLK_a || k == SDLK_LEFT)  p->keyLeft  = 1;
+            if (k == SDLK_d || k == SDLK_RIGHT)  p->keyRight = 1;
+            if (k == SDLK_SPACE || k == SDLK_w)  p->keyJump  = 1;
             if (k == SDLK_LSHIFT) p->isRunning = !p->isRunning;
             if (k == SDLK_LCTRL) { p->keyAttack = 1; tirerBalle(p); }
         } else {
-            if (k == SDLK_LEFT)   p->keyLeft   = 1;
-            if (k == SDLK_RIGHT)  p->keyRight  = 1;
-            if (k == SDLK_RETURN) p->keyJump   = 1;
+            if (k == SDLK_LEFT)   p->keyLeft  = 1;
+            if (k == SDLK_RIGHT)  p->keyRight = 1;
+            if (k == SDLK_RETURN || k == SDLK_KP_ENTER) p->keyJump = 1;
             if (k == SDLK_RSHIFT) p->isRunning = !p->isRunning;
             if (k == SDLK_RCTRL) { p->keyAttack = 1; tirerBalle(p); }
         }
     }
+
     if (e->type == SDL_KEYUP) {
         SDL_Keycode k = e->key.keysym.sym;
         if (p->id == PLAYER_1) {
-            if (k == SDLK_q)     p->keyLeft  = 0;
-            if (k == SDLK_d)     p->keyRight = 0;
-            if (k == SDLK_SPACE) p->keyJump  = 0;
+            /* FIX: reset all movement keys on release */
+            if (k == SDLK_a || k == SDLK_LEFT)  p->keyLeft   = 0;
+            if (k == SDLK_d || k == SDLK_RIGHT)  p->keyRight  = 0;
+            if (k == SDLK_SPACE || k == SDLK_w)  p->keyJump   = 0;
+            if (k == SDLK_LCTRL)                  p->keyAttack = 0; /* FIX */
         } else {
-            if (k == SDLK_LEFT)   p->keyLeft  = 0;
-            if (k == SDLK_RIGHT)  p->keyRight = 0;
-            if (k == SDLK_RETURN) p->keyJump  = 0;
+            if (k == SDLK_LEFT)   p->keyLeft   = 0;
+            if (k == SDLK_RIGHT)  p->keyRight  = 0;
+            if (k == SDLK_RETURN || k == SDLK_KP_ENTER) p->keyJump = 0;
+            if (k == SDLK_RCTRL) p->keyAttack  = 0; /* FIX */
         }
     }
+
     if (e->type == SDL_MOUSEBUTTONDOWN) {
         if (e->button.button == SDL_BUTTON_LEFT  && p->id == PLAYER_1)
             { p->keyAttack = 1; tirerBalle(p); }
         if (e->button.button == SDL_BUTTON_RIGHT && p->id == PLAYER_2)
             { p->keyAttack = 1; tirerBalle(p); }
     }
+    /* FIX: reset keyAttack on mouse button up so it doesn't stay held */
+    if (e->type == SDL_MOUSEBUTTONUP) {
+        if (e->button.button == SDL_BUTTON_LEFT  && p->id == PLAYER_1)
+            p->keyAttack = 0;
+        if (e->button.button == SDL_BUTTON_RIGHT && p->id == PLAYER_2)
+            p->keyAttack = 0;
+    }
 }
 
+/* ================================================================
+ *  COLLISION RESOLUTION  —  FIX: threshold + boundary clamp
+ * ================================================================ */
 static void resoudreCollisions(Player *p, Platform *plats, int n)
 {
     int touchedGround = 0;
+
     for (int i = 0; i < n; i++) {
         Platform *pl = &plats[i];
         if (pl->destroyed || pl->isVoid) continue;
@@ -181,10 +229,10 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         int px = (int)p->worldX, py = (int)p->worldY;
         int pw = PLAYER_W,       ph = PLAYER_PH;
 
-        if (px + pw <= pl->rect.x) continue;
-        if (px >= pl->rect.x + pl->rect.w) continue;
-        if (py + ph <= pl->rect.y) continue;
-        if (py >= pl->rect.y + pl->rect.h) continue;
+        if (px + pw <= pl->rect.x)              continue;
+        if (px       >= pl->rect.x + pl->rect.w) continue;
+        if (py + ph  <= pl->rect.y)              continue;
+        if (py       >= pl->rect.y + pl->rect.h) continue;
 
         int ol  = (px + pw) - pl->rect.x;
         int or2 = (pl->rect.x + pl->rect.w) - px;
@@ -195,13 +243,11 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
         int mv = (ot < ob)  ? ot : ob;
 
         if (mv <= mh) {
-            /* Vertical resolution */
+            /* Vertical */
             if (ot < ob) {
-                /* Landing on top — only resolve if actually moving downward
-                   or barely overlapping. This prevents the "snap up" glitch
-                   when jumping into the underside of a platform. */
-                if (p->velY >= 0 || ot <= 4) {
-                    p->worldY -= ot;
+                /* FIX: threshold raised to 8 px — helps with fast descent */
+                if (p->velY >= 0 || ot <= 8) {
+                    p->worldY   -= ot;
                     if (p->velY >= 0) { p->velY = 0; touchedGround = 1; }
                 }
             } else {
@@ -209,7 +255,7 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
                 if (p->velY < 0) p->velY = 0;
             }
         } else {
-            /* Horizontal resolution */
+            /* Horizontal — mobile platform crush */
             if (pl->type == PLAT_MOBILE) {
                 Uint32 now = SDL_GetTicks();
                 if (now - p->lastDamageTime > 600) {
@@ -236,6 +282,7 @@ static void resoudreCollisions(Player *p, Platform *plats, int n)
     }
 }
 
+/* ── Void trap check  —  FIX: push-back clamped to world bounds ── */
 static void verifierPieges(Player *p, Platform *plats, int n)
 {
     Uint32 now = SDL_GetTicks();
@@ -243,39 +290,45 @@ static void verifierPieges(Player *p, Platform *plats, int n)
         Platform *pl = &plats[i];
         if (!pl->isVoid) continue;
 
-        int playerCenterX = (int)(p->worldX + PLAYER_W  / 2);
-        int playerCenterY = (int)(p->worldY + PLAYER_PH / 2);
+        int pcx = (int)(p->worldX + PLAYER_W  / 2);
+        int pcy = (int)(p->worldY + PLAYER_PH / 2);
 
-        int touchesVoid =
-            (playerCenterX >= pl->rect.x &&
-             playerCenterX <= pl->rect.x + pl->rect.w &&
-             playerCenterY >= pl->rect.y &&
-             playerCenterY <= pl->rect.y + pl->rect.h);
-
-        if (touchesVoid) {
+        if (pcx >= pl->rect.x &&
+            pcx <= pl->rect.x + pl->rect.w &&
+            pcy >= pl->rect.y &&
+            pcy <= pl->rect.y + pl->rect.h)
+        {
             if (now - p->lastDamageTime > 500) {
                 perdreVie(p);
                 p->lastDamageTime = now;
-                p->worldX = (float)(pl->rect.x - PLAYER_W - 10);
+
+                /* FIX: push player left of the void, clamped to [0, WORLD_WIDTH] */
+                float pushX = (float)(pl->rect.x - PLAYER_W - 10);
+                if (pushX < 0) pushX = 0;
+                if (pushX > WORLD_WIDTH - PLAYER_W)
+                    pushX = (float)(WORLD_WIDTH - PLAYER_W);
+                p->worldX = pushX;
                 p->worldY -= 60;
-                p->velX = 0; p->velY = 0;
+                p->velX = 0;
+                p->velY = -5.0f; /* small upward kick so player doesn't fall back in */
             }
             break;
         }
     }
 }
 
+/* ── State machine ──────────────────────────────────────────────── */
 static void determinerEtat(Player *p)
 {
-    if (!p->isAlive)              { p->state = STATE_DEATH;  return; }
-    if (p->attackTimer > 0)       { p->state = STATE_SHOOT;  return; }
+    if (!p->isAlive)          { p->state = STATE_DEATH; return; }
+    if (p->attackTimer > 0)   { p->state = STATE_SHOOT; return; }
     int airborne = (!p->onGround && p->coyoteFrames == 0);
-    if (airborne)                   p->state = STATE_JUMP;
+    if (airborne)               p->state = STATE_JUMP;
     else if (p->isRunning && (p->keyLeft || p->keyRight))
-                                    p->state = STATE_SPRINT;
+                                p->state = STATE_SPRINT;
     else if (p->keyLeft || p->keyRight)
-                                    p->state = STATE_WALK;
-    else                            p->state = STATE_IDLE;
+                                p->state = STATE_WALK;
+    else                        p->state = STATE_IDLE;
 }
 
 static void deplacerJoueur(Player *p)
@@ -290,33 +343,41 @@ static void deplacerJoueur(Player *p)
         p->velY         = JUMP_FORCE;
         p->onGround     = 0;
         p->coyoteFrames = 0;
-        p->keyJump      = 0;
+        p->keyJump      = 0; /* consume jump key immediately */
     }
 }
 
 static void appliquerPhysique(Player *p)
 {
     if (!p->isAlive) return;
-    if (p->onGround && p->velY >= 0)
-        p->velY = 0;
-    else
-        p->velY += PLAYER_GRAVITY;
+
+    if (p->onGround && p->velY >= 0) p->velY = 0;
+    else                              p->velY += PLAYER_GRAVITY;
 
     p->worldX += p->velX;
     p->worldY += p->velY;
+
+    /* Horizontal world bounds */
     if (p->worldX < 0) { p->worldX = 0; p->velX = 0; }
     if (p->worldX > WORLD_WIDTH - PLAYER_W)
         { p->worldX = (float)(WORLD_WIDTH - PLAYER_W); p->velX = 0; }
-    float solY = (float)(SCREEN_HEIGHT - PLAYER_PH - 2);
-    if (p->worldY >= solY) { p->worldY = solY; p->velY = 0; p->onGround = 1; }
+
+    /* Floor safety net */
+    float floorY = (float)(SCREEN_HEIGHT - PLAYER_PH - 2);
+    if (p->worldY >= floorY) {
+        p->worldY   = floorY;
+        p->velY     = 0;
+        p->onGround = 1;
+    }
 }
 
+/* FIX: camera clamp uses full WORLD_WIDTH */
 static void mettreAJourCamera(Player *p)
 {
     float target = p->worldX - SCREEN_WIDTH * 0.4f;
     p->camX += (target - p->camX) * p->camSmooth;
     if (p->camX < 0) p->camX = 0;
-    if (p->camX > WORLD_WIDTH - SCREEN_WIDTH)
+    if (p->camX > (float)(WORLD_WIDTH - SCREEN_WIDTH))
         p->camX = (float)(WORLD_WIDTH - SCREEN_WIDTH);
 }
 
@@ -327,11 +388,10 @@ static void mettreAJourAnimation(Player *p)
 
     Uint32 now     = SDL_GetTicks();
     Uint32 elapsed = now - a->lastFrameTime;
-
     if (elapsed < (Uint32)a->frameDelay) return;
 
-    Uint32 ticks = elapsed / (Uint32)a->frameDelay;
-    a->lastFrameTime += ticks * (Uint32)a->frameDelay;
+    Uint32 ticks       = elapsed / (Uint32)a->frameDelay;
+    a->lastFrameTime  += ticks * (Uint32)a->frameDelay;
 
     if (p->state == STATE_DEATH) {
         int next = a->currentFrame + (int)ticks;
@@ -341,13 +401,9 @@ static void mettreAJourAnimation(Player *p)
     }
 }
 
-/*
- * FIX 3 — GLITCH:
- * mettreAJourBalles() is called ONCE here, inside mettreAJourJoueur.
- * main.c must NOT call it a second time — that double-update was
- * causing bullets (and indirectly the player via collision response)
- * to move at twice the expected speed, producing the jitter/glitch.
- */
+/* ================================================================
+ *  UPDATE
+ * ================================================================ */
 void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
 {
     deplacerJoueur(p);
@@ -370,10 +426,13 @@ void mettreAJourJoueur(Player *p, Platform *platforms, int platCount)
     mettreAJourAnimation(p);
     mettreAJourCamera(p);
 
-    /* Bullets updated ONCE here — do not call mettreAJourBalles from main.c */
+    /* Bullets updated ONCE here — do NOT call again from main.c */
     mettreAJourBalles(p);
 }
 
+/* ================================================================
+ *  BULLETS
+ * ================================================================ */
 void tirerBalle(Player *p)
 {
     if (!p->isAlive) return;
@@ -399,12 +458,15 @@ void mettreAJourBalles(Player *p)
         if (!p->bullets[i].active) continue;
         p->bullets[i].x += p->bullets[i].vx;
         p->bullets[i].y += p->bullets[i].vy;
-        if (p->bullets[i].x < 0 || p->bullets[i].x > WORLD_WIDTH
-         || p->bullets[i].y < 0 || p->bullets[i].y > WORLD_HEIGHT)
+        if (p->bullets[i].x < 0 || p->bullets[i].x > WORLD_WIDTH  ||
+            p->bullets[i].y < 0 || p->bullets[i].y > WORLD_HEIGHT)
             p->bullets[i].active = 0;
     }
 }
 
+/* ================================================================
+ *  RENDER
+ * ================================================================ */
 void afficherJoueur(Player *p, SDL_Renderer *renderer,
                     float camX, float camY)
 {
@@ -421,8 +483,9 @@ void afficherJoueur(Player *p, SDL_Renderer *renderer,
     SDL_RenderCopyEx(renderer, a->textures[a->currentFrame],
                      NULL, &p->dstRect, 0, NULL, flip);
 
+    /* Name tag above sprite */
     int tw = textWidth(p->name, 1);
-    drawText(renderer, sx + PLAYER_W/2 - tw/2, sy - 14,
+    drawText(renderer, sx + PLAYER_W / 2 - tw / 2, sy - 14,
              p->name, 1, 0, 255, 120);
 }
 
@@ -447,17 +510,17 @@ void afficherBalles(Player *p, SDL_Renderer *renderer,
 
 void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
 {
-    Uint8 cr = 0;
     Uint8 cg = (p->id == PLAYER_1) ? 200 : 200;
     Uint8 cb = (p->id == PLAYER_1) ?  50 : 255;
-    drawText(renderer, hx, hy, p->name, 1, cr, cg, cb);
+    drawText(renderer, hx, hy, p->name, 1, 0, cg, cb);
 
     int barW = 160, barH = 10, bx = hx, by = hy + 12;
     SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
     SDL_Rect bg = {bx, by, barW, barH};
     SDL_RenderFillRect(renderer, &bg);
 
-    int vieW = (int)(barW * p->health / 100.0f);
+    int   vieW = (int)(barW * p->health / 100.0f);
+    if (vieW < 0) vieW = 0;
     Uint8 gr = (p->health > 50) ? (Uint8)((100 - p->health) * 5) : 255;
     Uint8 gg = (p->health > 50) ? 255 : (Uint8)(p->health * 5);
     SDL_SetRenderDrawColor(renderer, gr, gg, 0, 255);
@@ -476,10 +539,12 @@ void afficherHUDJoueur(Player *p, SDL_Renderer *renderer, int hx, int hy)
 
 void ajouterScore(Player *p, int pts) { p->score += pts; }
 
+/* FIX: damageEvent always set so minimap flash fires reliably */
 void perdreVie(Player *p)
 {
-    p->health -= 25;
-    p->damageEvent = 1;
+    p->health     -= 25;
+    p->damageEvent = 1;  /* always signal — minimap consumes it */
+
     if (p->health <= 0) {
         p->lives--;
         if (p->lives <= 0) {

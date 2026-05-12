@@ -49,42 +49,33 @@ static Platform makeVoid(int x, int y, int w, int h, const char *lbl) {
 
 static void initL1(Background *bg) {
     int n = 0;
-   for (int t = 0; t < 3; t++) {
+    for (int t = 0; t < 3; t++) {
         int ox = t * 1280;
         bg->platforms[n++] = makeFix( ox+0,   508, 490, "Sol_G");
         bg->platforms[n++] = makeFix( ox+570, 508, 149, "Sol_M");
         bg->platforms[n++] = makeFix( ox+829, 508, 451, "Sol_D");
-        /* Pièges vides sous les manhole covers verts */
         bg->platforms[n++] = makeVoid(ox+490, 509,  80, SCREEN_HEIGHT, "Manhole_L");
         bg->platforms[n++] = makeVoid(ox+719, 509, 110, SCREEN_HEIGHT, "Manhole_R");
     }
-
-    
     bg->platforms[n++] = makeFix( 180, 295, 200, "Pass_L1");
     bg->platforms[n++] = makeFix( 600, 295, 180, "Pass_C1");
     bg->platforms[n++] = makeFix( 920, 295, 200, "Pass_R1");
     bg->platforms[n++] = makeFix(1460, 295, 200, "Pass_L2");
     bg->platforms[n++] = makeFix(1880, 295, 200, "Pass_R2");
-
-    
     bg->platforms[n++] = makeFix(   0, 110, 180, "Toit_L");
     bg->platforms[n++] = makeFix( 480, 110, 160, "Toit_C");
     bg->platforms[n++] = makeFix( 860, 110, 160, "Toit_R");
-
-    bg->platforms[n++] = makeMobile(350, 200, 120,MOVE_HORIZONTAL, 200, 650, 1.5f, "Mob_H1");
-    bg->platforms[n++] = makeMobile(800, 200, 120,MOVE_HORIZONTAL, 700, 1100, 2.0f, "Mob_H2");
-    bg->platforms[n++] = makeMobile(740, 380, 100,MOVE_VERTICAL, 150, 430, 1.2f, "Mob_V1");
-
+    bg->platforms[n++] = makeMobile(350, 200, 120, MOVE_HORIZONTAL, 200,  650, 1.5f, "Mob_H1");
+    bg->platforms[n++] = makeMobile(800, 200, 120, MOVE_HORIZONTAL, 700, 1100, 2.0f, "Mob_H2");
+    bg->platforms[n++] = makeMobile(740, 380, 100, MOVE_VERTICAL,   150,  430, 1.2f, "Mob_V1");
     bg->platforms[n++] = makeDestr(430,  380, 130, 3, "Destr_1");
     bg->platforms[n++] = makeDestr(1080, 295, 100, 2, "Destr_2");
-
     bg->platformCount = n;
     printf("[L1] %d plateformes initialisees\n", n);
 }
 
 static void initL2(Background *bg) {
     int n = 0;
-
     for (int t = 0; t < 3; t++) {
         int ox = t * 1280;
         bg->platforms[n++] = makeFix( ox+0,   560, 380, "Sol_G");
@@ -93,37 +84,25 @@ static void initL2(Background *bg) {
         bg->platforms[n++] = makeVoid(ox+380, 561, 100, SCREEN_HEIGHT, "Void_L");
         bg->platforms[n++] = makeVoid(ox+770, 561, 100, SCREEN_HEIGHT, "Void_R");
     }
-
-    
     bg->platforms[n++] = makeFix(100, 490,  80, "Deb_1");
     bg->platforms[n++] = makeFix(320, 475,  60, "Deb_2");
     bg->platforms[n++] = makeFix(600, 450, 100, "Deb_3");
     bg->platforms[n++] = makeFix(900, 480,  70, "Deb_4");
-
-    
     bg->platforms[n++] = makeFix(150, 320, 160, "Cable_L");
     bg->platforms[n++] = makeFix(520, 290, 140, "Cable_C");
     bg->platforms[n++] = makeFix(900, 310, 160, "Cable_R");
-
-  
-    bg->platforms[n++] = makeMobile(200, 230, 100,MOVE_HORIZONTAL, 100,  600, 1.8f, "Mob_H1");
-    bg->platforms[n++] = makeMobile(700, 180, 110,MOVE_VERTICAL,   120,  380, 1.5f, "Mob_V1");
-    bg->platforms[n++] = makeMobile(900, 230, 100,MOVE_HORIZONTAL, 800, 1200, 2.2f, "Mob_H2");
-
-
+    bg->platforms[n++] = makeMobile(200, 230, 100, MOVE_HORIZONTAL, 100,  600, 1.8f, "Mob_H1");
+    bg->platforms[n++] = makeMobile(700, 180, 110, MOVE_VERTICAL,   120,  380, 1.5f, "Mob_V1");
+    bg->platforms[n++] = makeMobile(900, 230, 100, MOVE_HORIZONTAL, 800, 1200, 2.2f, "Mob_H2");
     bg->platforms[n++] = makeDestr(300,  390, 130, 2, "Destr_1");
     bg->platforms[n++] = makeDestr(680,  360, 120, 1, "Destr_2");
     bg->platforms[n++] = makeDestr(1000, 390, 100, 3, "Destr_3");
-
-
     bg->platforms[n++] = makeFix(  0, 120, 150, "Toit_L");
     bg->platforms[n++] = makeFix(450, 100, 140, "Toit_C");
     bg->platforms[n++] = makeFix(900, 120, 150, "Toit_R");
-
     bg->platformCount = n;
     printf("[L2] %d plateformes initialisees\n", n);
 }
-
 
 static SDL_Texture *chargerBG(SDL_Renderer *renderer, const char *path,
                                int srcY, int srcH, int tileW) {
@@ -131,51 +110,34 @@ static SDL_Texture *chargerBG(SDL_Renderer *renderer, const char *path,
         fprintf(stderr, "[ERROR] Invalid parameters to chargerBG\n");
         return NULL;
     }
-
     SDL_Surface *full = IMG_Load(path);
     if (!full) {
-        fprintf(stderr, "[ERROR] Cannot load background image: %s (SDL_Error: %s)\n",
+        fprintf(stderr, "[ERROR] Cannot load background image: %s (%s)\n",
                 path, IMG_GetError());
         return NULL;
     }
-
-
-    if (full->w < tileW || full->h < srcY + srcH) {
-        fprintf(stderr, "[WARN] Background image too small: %dx%d, expected at least %dx%d\n",
-                full->w, full->h, tileW, srcY + srcH);
-    }
+    if (full->w < tileW || full->h < srcY + srcH)
+        fprintf(stderr, "[WARN] Background image too small: %dx%d\n",
+                full->w, full->h);
 
     SDL_Surface *crop = SDL_CreateRGBSurface(0, tileW, srcH,
         full->format->BitsPerPixel,
         full->format->Rmask, full->format->Gmask,
         full->format->Bmask, full->format->Amask);
-    
     if (!crop) {
         fprintf(stderr, "[ERROR] Failed to create crop surface: %s\n", SDL_GetError());
         SDL_FreeSurface(full);
         return NULL;
     }
-
     SDL_Rect src = {0, srcY, tileW, srcH};
-    int blit_result = SDL_BlitSurface(full, &src, crop, NULL);
-    if (blit_result != 0) {
-        fprintf(stderr, "[WARN] Blit operation failed: %s\n", SDL_GetError());
-    }
-
+    SDL_BlitSurface(full, &src, crop, NULL);
     SDL_FreeSurface(full);
-
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, crop);
     SDL_FreeSurface(crop);
-
-    if (tex) {
-        fprintf(stderr, "[INFO] Background texture loaded: %s\n", path);
-    } else {
+    if (!tex)
         fprintf(stderr, "[ERROR] Failed to create texture: %s\n", SDL_GetError());
-    }
-    
     return tex;
 }
-
 
 int initBackground(Background *bg, SDL_Renderer *renderer,
                    GameLevel level, DisplayMode mode) {
@@ -183,14 +145,12 @@ int initBackground(Background *bg, SDL_Renderer *renderer,
         fprintf(stderr, "[ERROR] Invalid background initialization parameters\n");
         return 1;
     }
-
     memset(bg, 0, sizeof(Background));
     bg->level       = level;
     bg->displayMode = mode;
     bg->camSmooth   = 0.08f;
     bg->startTime   = SDL_GetTicks();
 
-   
     const char *path;
     int srcY, srcH, tileW = 1050;
     if (level == LEVEL_1) { path = BG_L1_PATH; srcY = 457; srcH = 585; }
@@ -199,20 +159,9 @@ int initBackground(Background *bg, SDL_Renderer *renderer,
     bg->srcActiveY = srcY;
     bg->srcActiveH = srcH;
     bg->tileW      = tileW;
-    
-    bg->texFull = chargerBG(renderer, path, srcY, srcH, tileW);
-    if (!bg->texFull) {
-        fprintf(stderr, "[WARN] Background texture failed to load for level %d (path: %s)\n", level, path);
-        fprintf(stderr, "[WARN] Game will run with placeholder background\n");
-    
-    }
+    bg->texFull    = chargerBG(renderer, path, srcY, srcH, tileW);
 
     if (level == LEVEL_1) initL1(bg); else initL2(bg);
-
-    if (bg->platformCount == 0 || bg->platformCount > MAX_PLATFORMS) {
-        fprintf(stderr, "[WARN] Invalid platform count: %d\n", bg->platformCount);
-    }
-
     initGuide(&bg->guide, level);
     chargerScores(bg);
 
@@ -287,7 +236,6 @@ void updatePlatforms(Background *bg) {
 }
 
 void updateBackground(Background *bg) {
-
     updatePlatforms(bg);
     if (!bg->paused)
         bg->elapsedSeconds = (int)((SDL_GetTicks() - bg->startTime) / 1000);
@@ -305,11 +253,9 @@ void hitPlatform(Background *bg, int idx) {
     Platform *p = &bg->platforms[idx];
     if (p->type != PLAT_DESTRUCTIBLE || p->destroyed) return;
     p->hits++;
-    printf("[PLAT] %s : %d/%d\n", p->label, p->hits, p->maxHits);
     if (p->hits >= p->maxHits) {
         p->destroyed = 1;
         setNotification(bg, "PLATEFORME DETRUITE!", 1500);
-        printf("[PLAT] %s DETRUITE\n", p->label);
     }
 }
 
@@ -339,7 +285,6 @@ static void renderPlat(Platform *p, SDL_Renderer *renderer,
 
     SDL_Rect sr = {sx, sy, p->rect.w, p->rect.h};
     SDL_Color c = p->color;
-
     if (p->type == PLAT_DESTRUCTIBLE && p->hits > 0
         && (SDL_GetTicks() / 120) % 2 == 0)
         c = (SDL_Color){255, 60, 0, 220};
@@ -362,14 +307,12 @@ void afficherPlateformes(Background *bg, SDL_Renderer *renderer) {
 void afficherBackground(Background *bg, SDL_Renderer *renderer,
                         DisplayMode mode, SDL_Rect *viewport) {
     (void)mode;
-    /* vpW/vpH used for culling and tile height — caller manages SDL viewport */
     int vpW = viewport ? viewport->w : SCREEN_WIDTH;
     int vpH = viewport ? viewport->h : SCREEN_HEIGHT;
     renderBGTexture(bg, renderer, vpW, vpH);
     for (int i = 0; i < bg->platformCount; i++)
         renderPlat(&bg->platforms[i], renderer, bg, vpW, vpH);
 }
-
 
 void afficherTemps(Background *bg, SDL_Renderer *renderer, int x, int y) {
     char buf[32];
@@ -378,10 +321,8 @@ void afficherTemps(Background *bg, SDL_Renderer *renderer, int x, int y) {
     drawText(renderer, x, y, buf, 2, 0, 255, 70);
 }
 
-
 static void renderGuideWin(GuideWindow *gw, SDL_Renderer *renderer) {
     if (gw->state == GUIDE_HIDDEN) return;
-
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer,
         gw->bgColor.r, gw->bgColor.g, gw->bgColor.b, gw->bgColor.a);
@@ -395,11 +336,9 @@ static void renderGuideWin(GuideWindow *gw, SDL_Renderer *renderer) {
     drawText(renderer, sx, sy, gw->title, 2,
              gw->textColor.r, gw->textColor.g, gw->textColor.b);
     sy += textHeight(2) + 6;
-
     SDL_SetRenderDrawColor(renderer, 0, 120, 30, 200);
     SDL_RenderDrawLine(renderer, sx, sy, gw->rect.x + gw->rect.w - 8, sy);
     sy += 6;
-
     for (int i = 0; i < gw->lineCount && i < 8; i++) {
         drawText(renderer, sx, sy, gw->lines[i], 1, 180, 255, 180);
         sy += textHeight(1) + 4;
@@ -425,25 +364,34 @@ void afficherNotification(Background *bg, SDL_Renderer *renderer) {
     drawText(renderer, tx, ty, n->title, 2, 220, 40, 40);
 }
 
+/*
+ * saisirNomJoueur — blocking name input used only for the ENIGME LOSE
+ * path in multiplayer, or as a fallback when no name was pre-entered.
+ *
+ * FIX: SDL_StartTextInput is called BEFORE the render/event loop,
+ * and stale events are flushed with a short delay first so the RETURN
+ * key that closed the previous screen is never consumed as a confirm.
+ */
 void saisirNomJoueur(SDL_Renderer *renderer, char *outName) {
     char name[MAX_NAME_LEN] = {0};
     int  nameLen = 0, done = 0;
     SDL_Event e;
-    
-    /* Thoroughly flush all pending events from gameplay */
+
+    /* Stop any existing text input and flush stale events */
     SDL_StopTextInput();
-    SDL_Delay(200);
-    while (SDL_PollEvent(&e)) { 
-        /* discard all stale events */ 
-    }
-    SDL_Delay(100);
+    SDL_Delay(150);
+    while (SDL_PollEvent(&e)) { /* discard */ }
+    SDL_Delay(50);
+
+    /* Start BEFORE the loop so the first keystroke is not lost */
     SDL_StartTextInput();
 
     while (!done) {
         SDL_SetRenderDrawColor(renderer, 0, 8, 3, 255);
         SDL_RenderClear(renderer);
 
-        drawTextCentered(renderer, 250, 0, SCREEN_WIDTH,"ENTREZ VOTRE NOM", 3, 0, 255, 70);
+        drawTextCentered(renderer, 250, 0, SCREEN_WIDTH,
+                         "ENTREZ VOTRE NOM", 3, 0, 255, 70);
 
         SDL_Rect cadre = {SCREEN_WIDTH/2 - 200, 310, 400, 50};
         SDL_SetRenderDrawColor(renderer, 0, 180, 50, 255);
@@ -458,24 +406,32 @@ void saisirNomJoueur(SDL_Renderer *renderer, char *outName) {
         int tw = textWidth(display, 2);
         drawText(renderer, SCREEN_WIDTH/2 - tw/2, 322,
                  display, 2, 220, 220, 220);
-        drawTextCentered(renderer, 390, 0, SCREEN_WIDTH,"ENTREE=VALIDER  ESC=ANONYME", 1, 0, 140, 35);
-
+        drawTextCentered(renderer, 390, 0, SCREEN_WIDTH,
+                         "ENTREE=VALIDER  ESC=ANONYME", 1, 0, 140, 35);
         SDL_RenderPresent(renderer);
 
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_TEXTINPUT && nameLen < MAX_NAME_LEN - 1) {
-                strncat(name, e.text.text, MAX_NAME_LEN - 1 - nameLen);
-                nameLen = (int)strlen(name);
+                /* Accept only printable ASCII */
+                for (int c = 0; e.text.text[c] && nameLen < MAX_NAME_LEN - 1; c++) {
+                    char ch = e.text.text[c];
+                    if (ch >= 32 && ch < 127)
+                        name[nameLen++] = ch;
+                }
+                name[nameLen] = '\0';
             } else if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_BACKSPACE && nameLen > 0)
+                SDL_Keycode k = e.key.keysym.sym;
+                if (k == SDLK_BACKSPACE && nameLen > 0)
                     name[--nameLen] = '\0';
-                else if (e.key.keysym.sym == SDLK_RETURN && nameLen > 0)
+                else if (k == SDLK_RETURN && nameLen > 0)
                     done = 1;
-                else if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    strncpy(name, "ANONYME", MAX_NAME_LEN); done = 1;
+                else if (k == SDLK_ESCAPE) {
+                    strncpy(name, "ANONYME", MAX_NAME_LEN);
+                    done = 1;
                 }
             } else if (e.type == SDL_QUIT) {
-                strncpy(name, "ANONYME", MAX_NAME_LEN); done = 1;
+                strncpy(name, "ANONYME", MAX_NAME_LEN);
+                done = 1;
             }
         }
         SDL_Delay(16);
@@ -497,21 +453,15 @@ static void trierScores(Background *bg) {
 
 void sauvegarderScore(Background *bg, const char *name,
                       int score, int level) {
-    if (!bg || !name) {
-        fprintf(stderr, "[ERROR] Invalid parameters to sauvegarderScore\n");
-        return;
-    }
-
-    if (bg->scoreCount < 0 || bg->scoreCount > MAX_SCORES) {
-        fprintf(stderr, "[WARN] Invalid scoreCount %d, resetting\n", bg->scoreCount);
+    if (!bg || !name) return;
+    if (bg->scoreCount < 0 || bg->scoreCount > MAX_SCORES)
         bg->scoreCount = 0;
-    }
 
     if (bg->scoreCount < MAX_SCORES) {
         Score *s = &bg->scores[bg->scoreCount++];
         strncpy(s->name, name, MAX_NAME_LEN - 1);
         s->name[MAX_NAME_LEN - 1] = '\0';
-        s->score = score; 
+        s->score = score;
         s->level = level;
         s->time  = bg->elapsedSeconds;
     } else {
@@ -530,87 +480,54 @@ void sauvegarderScore(Background *bg, const char *name,
 
     FILE *f = fopen(SCORES_FILE, "wb");
     if (!f) {
-        fprintf(stderr, "[ERROR] Cannot open score file for writing: %s\n", SCORES_FILE);
+        fprintf(stderr, "[ERROR] Cannot open score file: %s\n", SCORES_FILE);
         return;
     }
-
-    size_t write_count = fwrite(&bg->scoreCount, sizeof(int), 1, f);
-    if (write_count != 1) {
-        fprintf(stderr, "[ERROR] Failed to write score count\n");
-        fclose(f);
-        return;
-    }
-
-    write_count = fwrite(bg->scores, sizeof(Score), bg->scoreCount, f);
-    if (write_count != (size_t)bg->scoreCount) {
-        fprintf(stderr, "[WARN] Wrote %zu scores, expected %d\n", write_count, bg->scoreCount);
-    }
-
-    if (fclose(f) != 0) {
-        fprintf(stderr, "[ERROR] Failed to close score file\n");
-    } else {
-        fprintf(stderr, "[INFO] Saved %d scores\n", bg->scoreCount);
-    }
+    fwrite(&bg->scoreCount, sizeof(int), 1, f);
+    fwrite(bg->scores, sizeof(Score), bg->scoreCount, f);
+    fclose(f);
+    fprintf(stderr, "[INFO] Saved %d scores\n", bg->scoreCount);
 }
 
 void chargerScores(Background *bg) {
-    if (!bg) {
-        fprintf(stderr, "[ERROR] Invalid background pointer in chargerScores\n");
-        return;
-    }
-
+    if (!bg) return;
     FILE *f = fopen(SCORES_FILE, "rb");
     if (!f) {
-        fprintf(stderr, "[INFO] Score file not found, starting fresh: %s\n", SCORES_FILE);
         bg->scoreCount = 0;
         return;
     }
-
-    size_t read_count = fread(&bg->scoreCount, sizeof(int), 1, f);
-    if (read_count != 1) {
-        fprintf(stderr, "[WARN] Failed to read score count, resetting\n");
+    size_t rc = fread(&bg->scoreCount, sizeof(int), 1, f);
+    if (rc != 1 || bg->scoreCount < 0 || bg->scoreCount > MAX_SCORES) {
         bg->scoreCount = 0;
         fclose(f);
         return;
     }
-
-    if (bg->scoreCount < 0 || bg->scoreCount > MAX_SCORES) {
-        fprintf(stderr, "[WARN] Invalid score count %d (max %d), truncating\n", 
-                bg->scoreCount, MAX_SCORES);
-        bg->scoreCount = 0;
-        fclose(f);
-        return;
-    }
-
-    read_count = fread(bg->scores, sizeof(Score), bg->scoreCount, f);
-    if (read_count != (size_t)bg->scoreCount) {
-        fprintf(stderr, "[WARN] Read %zu scores, expected %d\n", read_count, bg->scoreCount);
-        bg->scoreCount = read_count;
-    }
-
+    rc = fread(bg->scores, sizeof(Score), bg->scoreCount, f);
+    if (rc != (size_t)bg->scoreCount)
+        bg->scoreCount = (int)rc;
     fclose(f);
     trierScores(bg);
-    fprintf(stderr, "[INFO] Loaded %d scores from %s\n", bg->scoreCount, SCORES_FILE);
+    fprintf(stderr, "[INFO] Loaded %d scores\n", bg->scoreCount);
 }
 
 void afficherMeilleursScores(Background *bg, SDL_Renderer *renderer) {
     int running = 1;
     SDL_Event e;
-    /* Flush stale events (e.g. RETURN from name input) before showing scores */
     SDL_Delay(100);
-    while (SDL_PollEvent(&e)) { /* discard */ }
+    while (SDL_PollEvent(&e)) { /* discard stale events */ }
+
     while (running) {
         SDL_SetRenderDrawColor(renderer, 0, 6, 3, 255);
         SDL_RenderClear(renderer);
-
-        drawTextCentered(renderer, 40, 0, SCREEN_WIDTH,"MEILLEURS SCORES", 3, 0, 255, 70);
-        drawText(renderer, 60, 110,"# NOM                SCORE NIV TEMPS", 1, 220, 180, 0);
+        drawTextCentered(renderer, 40, 0, SCREEN_WIDTH,
+                         "MEILLEURS SCORES", 3, 0, 255, 70);
+        drawText(renderer, 60, 110,
+                 "# NOM                SCORE NIV TEMPS", 1, 220, 180, 0);
         SDL_SetRenderDrawColor(renderer, 0, 200, 50, 255);
         SDL_RenderDrawLine(renderer, 60, 126, SCREEN_WIDTH - 60, 126);
-
         if (bg->scoreCount == 0)
-            drawTextCentered(renderer, 200, 0, SCREEN_WIDTH,"AUCUN SCORE ENREGISTRE", 2, 0, 140, 35);
-
+            drawTextCentered(renderer, 200, 0, SCREEN_WIDTH,
+                             "AUCUN SCORE ENREGISTRE", 2, 0, 140, 35);
         for (int i = 0; i < bg->scoreCount && i < MAX_SCORES; i++) {
             Score *sc = &bg->scores[i];
             char line[80];
@@ -620,8 +537,8 @@ void afficherMeilleursScores(Background *bg, SDL_Renderer *renderer) {
             Uint8 r = (i==0)?220:180, g = (i==0)?180:255, b = (i==0)?0:180;
             drawText(renderer, 60, 140 + i*22, line, 1, r, g, b);
         }
-
-        drawTextCentered(renderer, SCREEN_HEIGHT - 40, 0, SCREEN_WIDTH,"APPUYEZ SUR UNE TOUCHE", 1, 0, 140, 35);
+        drawTextCentered(renderer, SCREEN_HEIGHT - 40, 0, SCREEN_WIDTH,
+                         "APPUYEZ SUR UNE TOUCHE", 1, 0, 140, 35);
         SDL_RenderPresent(renderer);
 
         while (SDL_PollEvent(&e))
@@ -630,8 +547,8 @@ void afficherMeilleursScores(Background *bg, SDL_Renderer *renderer) {
     }
 }
 
-
-void worldToScreen(const Background *bg, float wx, float wy,int *sx, int *sy) {
+void worldToScreen(const Background *bg, float wx, float wy,
+                   int *sx, int *sy) {
     *sx = (int)(wx - bg->camX);
     *sy = (int)(wy - bg->camY);
 }
@@ -645,7 +562,7 @@ void setNotification(Background *bg, const char *msg, int durationMs) {
     GuideWindow *n = &bg->notification;
     n->state     = GUIDE_VISIBLE;
     n->showUntil = SDL_GetTicks() + (Uint32)durationMs;
-    n->rect      = (SDL_Rect){SCREEN_WIDTH/2 - 170,SCREEN_HEIGHT/2 - 30, 340, 60};
+    n->rect      = (SDL_Rect){SCREEN_WIDTH/2 - 170, SCREEN_HEIGHT/2 - 30, 340, 60};
     n->bgColor   = (SDL_Color){20, 0, 0, 230};
     n->textColor = (SDL_Color){220, 40, 40, 255};
     strncpy(n->title, msg, 63);
@@ -654,10 +571,10 @@ void setNotification(Background *bg, const char *msg, int durationMs) {
 
 void togglePause(Background *bg) {
     if (!bg->paused) {
-        bg->paused = 1;
+        bg->paused    = 1;
         bg->pauseStart = SDL_GetTicks();
     } else {
-        bg->paused = 0;
+        bg->paused    = 0;
         bg->startTime += (SDL_GetTicks() - bg->pauseStart);
     }
 }
